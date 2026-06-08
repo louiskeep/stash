@@ -1,0 +1,17 @@
+[project]
+name = "stash"
+version = "0.0.0"
+description = "stash - a second brain that isn't a chatbot (recall-only v0, no generative LLM)"
+requires-python = ">=3.10"
+dependencies = []
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider"
