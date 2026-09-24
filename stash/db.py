@@ -32,12 +32,14 @@ def migrate(conn: sqlite3.Connection) -> None:
     from datetime import datetime, timezone
 
     done = _applied(conn)
-    for version, sql in MIGRATIONS:
+    for version, sql in sorted(MIGRATIONS):
         if version in done:
             continue
-        with conn:  # one transaction per migration
-            conn.executescript(sql)
-            conn.execute(
-                "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
-                (version, datetime.now(timezone.utc).isoformat()),
-            )
+        # executescript() autocommits DDL; use IF NOT EXISTS to enable idempotent recovery.
+        # Run script, record version, then commit so the version row is durable.
+        conn.executescript(sql)
+        conn.execute(
+            "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+            (version, datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
