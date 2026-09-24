@@ -31,6 +31,22 @@ Cam before build.
       (the M1 scheduler mechanics exist; M2 adds the live loop and a real
       `Delivery`).
 
+  **MUST-FIX before the live scheduler loop goes in (T1): reminder-scheduler
+  concurrency, found by the M1 Codex gate but only reachable once `run_due` runs
+  concurrently (M1 never invokes it concurrently, so these are latent, not
+  reachable, in the shipped CLI):**
+  - `claim_due_reminders` claims a whole batch and increments `attempts` for
+    every row at claim time. With a low cap and a first send that outlives its
+    lease, a later `fail_exhausted` pass can terminalize the rest of the batch to
+    `failed` before they are ever sent. Fix direction: claim/send one reminder at
+    a time, or count an attempt at send time rather than claim time, and
+    reconcile the attempt-cap vs lease-expiry interaction. Redesign `run_due`'s
+    claim-then-send model here and re-gate before the loop is live.
+  - Decide the cap-vs-lease contract: with `max_attempts = 1`, a send that
+    outlasts its lease has no room for the lease-expiry re-send, so it can be
+    recorded `failed` despite delivery. Document the required relationship
+    (lease must exceed worst-case send time) or raise the effective floor.
+
 ## Milestone 3: Web UI + ML clustering
 
 - [ ] **W1: Web UI.** Jinja + htmx pages (Search, Timeline, Topics, Note detail,

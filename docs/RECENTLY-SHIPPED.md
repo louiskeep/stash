@@ -33,11 +33,25 @@ Gate evidence:
   Critical. Four should-fix items resolved before merge: FTS query crash on
   punctuation, missing spec §10 txn-across-send test, `STASH_EMBED_MODEL`
   ignored by the CLI, and these docs.
-- Full suite: 47 tests pass, including the real-encoder eval.
+- Two-gate merge check: dennis GO (0 Critical/0 High); Codex gate ran three
+  rounds. Round 1 (reindex crash-recovery, reminder lease ownership, CLI startup
+  repair) and round 2 (ownership recheck before send, attempt-cap on claim,
+  reindex on embed-model change) were remediated at the root with reproduce-first
+  tests. Round 3 flagged a reminder-scheduler batch-claim/attempt-accounting bug
+  that is only reachable under a concurrent `run_due` (a live scheduler loop),
+  which M1 does not have. Per Cam's call, M1 ships now and that item is tracked
+  as must-fix-before-M2 (see ROADMAP). The cheap config-validation fix
+  (reject `max_attempts = 0`) landed here.
+- Full suite: 58 tests pass, including the real-encoder eval.
 
 Not in M1 (by design): live Telegram adapter, running poller/scheduler loop,
 web UI, HDBSCAN clustering. Run command is `python -m stash` (a `uv run stash`
 entry point is an M3 packaging follow-up).
+
+Known limitation carried to M2: the reminder scheduler's concurrency (batch
+claim + attempt accounting under a running loop) needs a redesign before the
+live loop lands. It is safe in M1 because `run_due` is never invoked
+concurrently here.
 
 ---
 cam
