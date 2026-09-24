@@ -13,8 +13,10 @@ def run_due(storage, delivery, now: str, lease_seconds: int,
     # Terminalize any reminder that hit the attempt cap while stuck
     # 'pending' (its previous tick crashed/hung before releasing it), so
     # claim_due_reminders' attempts<max_attempts guard doesn't leave it
-    # orphaned forever.
-    storage.fail_exhausted_reminders(now, max_attempts)
+    # orphaned forever. Lease-aware: a row still within its lease may be
+    # owned by another tick mid-send on its final attempt, so it is left
+    # alone here rather than terminalized out from under its owner.
+    storage.fail_exhausted_reminders(now, max_attempts, lease_seconds)
     claimed = storage.claim_due_reminders(now, lease_seconds, max_attempts)
     delivered = 0
     for row in claimed:

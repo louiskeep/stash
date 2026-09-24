@@ -174,16 +174,30 @@ class Storage:
             "SELECT claimed_at FROM reminders WHERE id=?", (rid,)).fetchone()
         return row["claimed_at"] if row else None
 
-    def fail_exhausted_reminders(self, now, max_attempts):
+    def fail_exhausted_reminders(self, now, max_attempts, lease_seconds):
         # Terminalize reminders that hit the attempt cap while still
         # 'pending' (e.g. a tick that claimed one but crashed/hung before
         # calling release_reminder), so they stop lingering as reclaimable
         # forever once claim_due_reminders starts excluding attempts>=cap.
+        #
+        # Lease-aware, mirroring claim_due_reminders' own guard: a row whose
+        # lease is still live is owned by some tick that may be mid-send on
+        # its final attempt. Without this guard, calling this at the start
+        # of a concurrent tick could terminalize that row out from under its
+        # owner -- flipping it to 'failed' and clearing claimed_at -- so the
+        # owner's later mark_reminder_sent CAS (WHERE claimed_at=<token>) no
+        # longer matches and silently no-ops, leaving a delivered reminder
+        # recorded as 'failed'. Only rows that are unowned (never claimed)
+        # or whose lease has actually expired are fair game here.
+        from datetime import datetime, timedelta
+        cutoff = (datetime.fromisoformat(now)
+                  - timedelta(seconds=lease_seconds)).isoformat()
         with self.conn:
             self.conn.execute(
                 "UPDATE reminders SET status='failed', claimed_at=NULL"
-                " WHERE status='pending' AND fire_at<=? AND attempts>=?",
-                (now, max_attempts),
+                " WHERE status='pending' AND fire_at<=? AND attempts>=?"
+                "   AND (claimed_at IS NULL OR claimed_at<?)",
+                (now, max_attempts, cutoff),
             )
 
     def mark_reminder_sent(self, rid, when, expected_claimed_at):

@@ -214,3 +214,53 @@ def test_crash_before_release_does_not_bypass_attempt_cap(tmp_path):
     assert d.calls <= max_attempts
     assert row["attempts"] <= max_attempts
     assert row["status"] == "failed"
+
+
+def test_fail_exhausted_reminders_does_not_clobber_an_owned_final_attempt(tmp_path):
+    # R2 re-review finding: fail_exhausted_reminders matched status='pending'
+    # AND fire_at<=? AND attempts>=? with NO lease guard, unlike
+    # claim_due_reminders (which only touches rows where claimed_at IS NULL
+    # OR claimed_at<cutoff). So calling it at the start of a concurrent tick
+    # could terminalize a reminder ANOTHER tick currently owns on its final
+    # attempt, still well within its lease: flip it to 'failed' and clear
+    # claimed_at out from under the owner. The owner's send then succeeds,
+    # but its mark_reminder_sent CAS (WHERE id=? AND claimed_at=?) no longer
+    # matches (claimed_at is now NULL), so it silently no-ops, leaving a
+    # delivered reminder recorded as 'failed'.
+    s = _due_reminder(tmp_path)
+    max_attempts = 3
+    lease_seconds = 120
+
+    # Drive attempts to max_attempts-1 via ordinary claim/release cycles
+    # that never trip the cap.
+    for m in range(31, 33):
+        claimed = s.claim_due_reminders(_at(m), lease_seconds, max_attempts)
+        assert len(claimed) == 1
+        s.release_reminder(claimed[0]["id"], max_attempts, claimed[0]["claimed_at"])
+
+    # The final attempt: this claim brings attempts to max_attempts. The
+    # owner now holds a live lease (120s) starting at owner_now.
+    owner_now = _at(33)
+    claimed = s.claim_due_reminders(owner_now, lease_seconds, max_attempts)
+    assert len(claimed) == 1
+    row = claimed[0]
+    assert row["attempts"] == max_attempts
+    owner_token = row["claimed_at"]
+    assert owner_token == owner_now
+
+    # A concurrent tick starts at essentially the same moment, well inside
+    # the owner's lease, and runs the exhausted-reminder sweep.
+    s.fail_exhausted_reminders(owner_now, max_attempts, lease_seconds)
+
+    still_owned = s.conn.execute(
+        "SELECT status, claimed_at FROM reminders WHERE id=?", (row["id"],)
+    ).fetchone()
+    assert still_owned["status"] == "pending"  # not clobbered out from under the owner
+    assert still_owned["claimed_at"] == owner_token
+
+    # The owner's send succeeds; its CAS mark must still hold.
+    s.mark_reminder_sent(row["id"], _at(34), owner_token)
+    final = s.conn.execute(
+        "SELECT status FROM reminders WHERE id=?", (row["id"],)
+    ).fetchone()
+    assert final["status"] == "sent"
