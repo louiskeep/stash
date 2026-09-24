@@ -49,6 +49,15 @@ def test_bm25_and_vec_search_find_the_note(tmp_path):
     assert s.search_vec(_vec(1.0, 0.0), 5)[0] == nid
 
 
+def test_reembedding_same_note_syncs_fts_without_duplicates(tmp_path):
+    s = Storage.open(str(tmp_path / "t.db"))
+    nid = s.add_note("the quick brown fox", "cli", "t0")
+    s.set_embedding(nid, _vec(1.0, 0.0))
+    s.set_embedding(nid, _vec(0.0, 1.0))  # simulate re-embedding on reindex
+    results = s.search_bm25("brown fox", 5)
+    assert results.count(nid) == 1
+
+
 def test_kv_roundtrip(tmp_path):
     s = Storage.open(str(tmp_path / "t.db"))
     assert s.kv_get("offset") is None

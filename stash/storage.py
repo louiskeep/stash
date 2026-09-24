@@ -34,8 +34,10 @@ class Storage:
                     (raw, source, source_chat_id, source_msg_id, created_at),
                 )
                 return cur.lastrowid
-        except sqlite3.IntegrityError:
-            return None  # scoped dedupe key already present
+        except sqlite3.IntegrityError as e:
+            if "UNIQUE constraint failed" in str(e):
+                return None  # scoped dedupe key already present
+            raise
 
     def get_note(self, note_id) -> sqlite3.Row | None:
         return self.conn.execute(
