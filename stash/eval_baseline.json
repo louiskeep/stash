@@ -1,0 +1,7 @@
+{
+  "fts_only_hit_rate_at_3": 0.0,
+  "fts_only_mrr": 0.0,
+  "hybrid_hit_rate_at_3": 1.0,
+  "hybrid_mrr": 1.0,
+  "n": 3
+}

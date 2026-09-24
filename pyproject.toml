@@ -18,3 +18,4 @@ package = false
 pythonpath = ["."]
 testpaths = ["tests"]
 addopts = "-p no:cacheprovider"
+markers = ["eval: retrieval-quality tests that load the real embedding model"]

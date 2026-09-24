@@ -1,0 +1,17 @@
+[
+  {"query": "that book about human history and cognition",
+   "note": "Sapiens by Harari, great on the cognitive revolution #books",
+   "distractors": ["grocery list milk eggs bread",
+                   "standup notes ship the scheduler #work",
+                   "dentist appointment next tuesday"]},
+  {"query": "the espresso machine I wanted",
+   "note": "look into the Gaggia Classic Pro espresso machine #shopping",
+   "distractors": ["call the plumber about the leak",
+                   "idea: a note app that texts you back",
+                   "renew car registration"]},
+  {"query": "app idea about notes",
+   "note": "idea: a note app that texts you back and finds things later",
+   "distractors": ["Sapiens by Harari #books",
+                   "buy running shoes",
+                   "meeting with the bank friday"]}
+]
