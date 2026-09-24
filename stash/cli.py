@@ -42,6 +42,17 @@ def main(argv=None, storage=None, embedder=None) -> int:
     if storage.underived_note_ids():
         repair(storage, embedder)
 
+    # Spec 6.5: record which embedding model produced the stored vectors,
+    # and reindex when it changes, so stored and query vectors are never
+    # drawn from two different vector spaces.
+    stored_model = storage.kv_get("embed_model")
+    current_model = embedder.name
+    if stored_model is None:
+        storage.kv_set("embed_model", current_model)
+    elif stored_model != current_model:
+        reindex(storage, embedder)
+        storage.kv_set("embed_model", current_model)
+
     if args.cmd == "add":
         r = capture(storage, embedder, args.text, "cli", _now())
         print(r.receipt)

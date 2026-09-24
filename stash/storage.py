@@ -142,9 +142,13 @@ class Storage:
         ).fetchall()
         return [r["note_id"] for r in rows]
 
-    def claim_due_reminders(self, now, lease_seconds):
+    def claim_due_reminders(self, now, lease_seconds, max_attempts):
         # Exclusive claim in one short transaction. A reminder is claimable if
-        # pending, due, and either never claimed or its lease has expired.
+        # pending, due, under the attempt cap, and either never claimed or its
+        # lease has expired. The attempts<? guard keeps a reminder that has
+        # reached the cap from being reclaimed forever by a tick that never
+        # gets to release it (crash/hang before release_reminder runs) --
+        # fail_exhausted_reminders is what terminalizes it once that happens.
         from datetime import datetime, timedelta
         cutoff = (datetime.fromisoformat(now)
                   - timedelta(seconds=lease_seconds)).isoformat()
@@ -153,12 +157,34 @@ class Storage:
                 "UPDATE reminders SET claimed_at=?, attempts=attempts+1"
                 " WHERE id IN ("
                 "   SELECT id FROM reminders"
-                "   WHERE status='pending' AND fire_at<=?"
+                "   WHERE status='pending' AND fire_at<=? AND attempts<?"
                 "     AND (claimed_at IS NULL OR claimed_at<?))"
                 " RETURNING *",
-                (now, now, cutoff),
+                (now, now, max_attempts, cutoff),
             ).fetchall()
         return rows
+
+    def reminder_claim_token(self, rid) -> str | None:
+        # Current claimed_at for a reminder, or None if it has none (never
+        # claimed, or already completed/reclaimed). run_due compares this
+        # against the token a tick claimed a row with, immediately before
+        # sending, to detect that another tick has since reclaimed or
+        # completed the row.
+        row = self.conn.execute(
+            "SELECT claimed_at FROM reminders WHERE id=?", (rid,)).fetchone()
+        return row["claimed_at"] if row else None
+
+    def fail_exhausted_reminders(self, now, max_attempts):
+        # Terminalize reminders that hit the attempt cap while still
+        # 'pending' (e.g. a tick that claimed one but crashed/hung before
+        # calling release_reminder), so they stop lingering as reclaimable
+        # forever once claim_due_reminders starts excluding attempts>=cap.
+        with self.conn:
+            self.conn.execute(
+                "UPDATE reminders SET status='failed', claimed_at=NULL"
+                " WHERE status='pending' AND fire_at<=? AND attempts>=?",
+                (now, max_attempts),
+            )
 
     def mark_reminder_sent(self, rid, when, expected_claimed_at):
         # Lease-owned compare-and-swap: only complete the row if this tick's

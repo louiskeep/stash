@@ -14,6 +14,40 @@ def test_cli_add_then_search(tmp_path, capsys):
     assert "brown fox" in out
 
 
+def test_cli_reindexes_when_embed_model_changes(tmp_path, capsys):
+    # Gate finding 3 / spec 6.5: changing the embedding model must not
+    # silently mix vector spaces. main() records which model produced the
+    # stored vectors, and reindexes with the new model when it changes, so
+    # a later query is always compared against vectors from the same model.
+    s = Storage.open(str(tmp_path / "t.db"))
+
+    class NamedFakeEmbedder(FakeEmbedder):
+        def __init__(self, model_name, dim=384):
+            super().__init__(dim)
+            self._model_name = model_name
+            self.embed_calls = 0
+
+        @property
+        def name(self):
+            return self._model_name
+
+        def embed(self, text):
+            self.embed_calls += 1
+            return super().embed(text)
+
+    e_a = NamedFakeEmbedder("model-a")
+    assert main(["add", "distinct search phrase zephyr"], storage=s, embedder=e_a) == 0
+    assert s.kv_get("embed_model") == "model-a"
+
+    e_b = NamedFakeEmbedder("model-b")
+    capsys.readouterr()  # clear
+    assert main(["search", "distinct search phrase zephyr"], storage=s, embedder=e_b) == 0
+    out = capsys.readouterr().out
+    assert "zephyr" in out  # still found, re-embedded and searched under model-b
+    assert s.kv_get("embed_model") == "model-b"
+    assert e_b.embed_calls >= 1  # reindex ran under the new model
+
+
 def test_cli_wires_stash_embed_model_into_default_embedder(tmp_path, monkeypatch):
     monkeypatch.setenv("STASH_EMBED_MODEL", "custom-test-model")
     seen = {}
@@ -21,6 +55,7 @@ def test_cli_wires_stash_embed_model_into_default_embedder(tmp_path, monkeypatch
     class SpyEmbedder:
         def __init__(self, model_name):
             seen["model_name"] = model_name
+            self.name = model_name  # main() reads .name for the kv reconcile
 
     monkeypatch.setattr(cli_module, "SentenceTransformerEmbedder", SpyEmbedder)
     s = Storage.open(str(tmp_path / "t.db"))

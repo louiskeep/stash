@@ -79,8 +79,8 @@ def test_lease_blocks_double_claim_within_lease(tmp_path):
     s = _due_reminder(tmp_path)
     # First claim leases it; a second immediate pass (still under lease,
     # simulating a concurrent tick) claims nothing.
-    first = s.claim_due_reminders(_at(31), lease_seconds=120)
-    second = s.claim_due_reminders(_at(31), lease_seconds=120)
+    first = s.claim_due_reminders(_at(31), lease_seconds=120, max_attempts=5)
+    second = s.claim_due_reminders(_at(31), lease_seconds=120, max_attempts=5)
     assert len(first) == 1
     assert second == []
 
@@ -117,3 +117,100 @@ def test_stale_tick_completion_does_not_clobber_a_newer_sent_row(tmp_path):
     later_delivery = FakeDelivery()
     assert run_due(s, later_delivery, _at(40), lease_seconds=120, max_attempts=5) == 0
     assert later_delivery.sent == []  # no repeated send
+
+
+def test_stale_tick_skips_send_for_batch_row_reclaimed_mid_send(tmp_path):
+    # Gate finding 1: run_due claims a whole batch up front, then sends each
+    # claimed row in a loop, without re-checking that it still owns each
+    # row's lease at send time. If the FIRST send in the batch runs long
+    # enough for the lease to expire, a nested tick can reclaim and deliver
+    # the ENTIRE batch (including rows this tick hasn't reached yet) before
+    # this tick's loop resumes. The row that triggered the nested reclaim is
+    # a documented, unavoidable at-least-once duplicate (its own send is
+    # already in flight when the reclaim happens); every OTHER row still
+    # queued in this tick's loop must not be sent again.
+    s = Storage.open(str(tmp_path / "t.db"))
+    e = FakeEmbedder()
+    capture(s, e, "remind me in 30min to stretch", "cli", _at(0))
+    capture(s, e, "remind me in 30min to call mom", "cli", _at(0))
+
+    sent_log: list[tuple[str, str, str]] = []  # (tag, chat_id, text)
+
+    class TaggedDelivery:
+        def __init__(self, tag):
+            self.tag = tag
+
+        def send(self, chat_id, text):
+            sent_log.append((self.tag, chat_id, text))
+
+    class TickAOutlastsLease(TaggedDelivery):
+        """Tick A's first send outlives its lease: before it returns, a
+        nested tick B (past the lease) reclaims A's whole in-flight batch
+        and delivers it. Tick A's loop then resumes for its remaining
+        rows."""
+
+        def __init__(self, storage, inner):
+            super().__init__("A")
+            self.storage = storage
+            self.inner = inner
+            self.calls = 0
+
+        def send(self, chat_id, text):
+            self.calls += 1
+            if self.calls == 1:
+                run_due(self.storage, self.inner, _at(34),
+                         lease_seconds=120, max_attempts=5)
+            super().send(chat_id, text)
+
+    tick_b_delivery = TaggedDelivery("B")
+    tick_a_delivery = TickAOutlastsLease(s, tick_b_delivery)
+    run_due(s, tick_a_delivery, _at(31), lease_seconds=120, max_attempts=5)
+
+    by_text: dict[str, list[str]] = {}
+    for tag, _chat_id, text in sent_log:
+        by_text.setdefault(text, []).append(tag)
+
+    assert len(by_text) == 2  # both reminders were delivered at least once
+    counts = sorted(len(tags) for tags in by_text.values())
+    # The row whose send triggered the nested reclaim is sent twice (by
+    # both A and B) -- the inherent residual duplicate. The other row in
+    # A's batch must be caught by the ownership recheck: sent exactly
+    # once, by B only.
+    assert counts == [1, 2]
+    once_sent = next(tags for tags in by_text.values() if len(tags) == 1)
+    assert once_sent == ["B"]
+
+
+def test_crash_before_release_does_not_bypass_attempt_cap(tmp_path):
+    # Gate finding 2: claim_due_reminders increments attempts on every claim
+    # but never filtered on max_attempts, so a reminder whose tick crashes
+    # or hangs before it can call release_reminder (status stays 'pending',
+    # never flips to 'failed') gets reclaimed and re-sent without limit. A
+    # BaseException (not caught by run_due's `except Exception`) models a
+    # tick that dies mid-send, before its own release/mark-sent logic runs
+    # -- exactly the gap the finding describes.
+    s = _due_reminder(tmp_path)
+
+    class Crash(BaseException):
+        pass
+
+    class CrashingDelivery:
+        def __init__(self):
+            self.calls = 0
+
+        def send(self, chat_id, text):
+            self.calls += 1
+            raise Crash("tick died before it could release the claim")
+
+    d = CrashingDelivery()
+    max_attempts = 3
+    for m in range(31, 60):  # far more ticks than max_attempts; short lease
+        try:                 # keeps it reclaimable every time despite the
+            run_due(s, d, _at(m), lease_seconds=1, max_attempts=max_attempts)
+        except Crash:
+            pass  # the tick "crashed"; a fresh tick resumes next minute
+
+    row = s.conn.execute("SELECT status, attempts FROM reminders").fetchone()
+    assert d.calls <= max_attempts
+    assert row["attempts"] <= max_attempts
+    assert row["status"] == "failed"
