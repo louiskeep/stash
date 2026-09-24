@@ -966,8 +966,10 @@ from stash.storage import Storage
 
 
 def test_rrf_fuse_hand_computed_order():
-    # item 2 appears high in both lists -> should win.
-    fused = rrf_fuse([[1, 2, 3], [2, 1, 4]], k=60)
+    # item 2 is rank 0 in both lists, so it wins outright. (An earlier draft
+    # used [[1,2,3],[2,1,4]], which ties items 1 and 2 on RRF score; the tie
+    # is broken by insertion order, not by rank, so it did not test ordering.)
+    fused = rrf_fuse([[2, 1, 3], [2, 1, 4]], k=60)
     assert fused[0] == 2
     assert set(fused) == {1, 2, 3, 4}
 
