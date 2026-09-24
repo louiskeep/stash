@@ -1,6 +1,7 @@
 """stash command line: capture and recall without a bot or web UI."""
 
 import argparse
+import os
 import sys
 from datetime import datetime, timezone
 
@@ -28,11 +29,11 @@ def main(argv=None, storage=None, embedder=None) -> int:
     sub.add_parser("tags")  # deterministic Topics: tag -> count
     args = parser.parse_args(argv)
 
+    cfg = load_config(os.environ) if storage is None or embedder is None else None
     if storage is None:
-        cfg = load_config(__import__("os").environ)
         storage = Storage.open(cfg.db_path, cfg.busy_timeout_ms)
     if embedder is None:
-        embedder = SentenceTransformerEmbedder()
+        embedder = SentenceTransformerEmbedder(cfg.embed_model)
 
     if args.cmd == "add":
         r = capture(storage, embedder, args.text, "cli", _now())

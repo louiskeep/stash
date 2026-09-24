@@ -58,6 +58,19 @@ def test_reembedding_same_note_syncs_fts_without_duplicates(tmp_path):
     assert results.count(nid) == 1
 
 
+def test_bm25_search_survives_punctuated_queries(tmp_path):
+    s = Storage.open(str(tmp_path / "t.db"))
+    nid = s.add_note("co-worker sync notes", "cli", "t0")
+    s.set_embedding(nid, _vec(1.0, 0.0))
+    # Hyphenated word still matches as a phrase.
+    assert nid in s.search_bm25("co-worker", 5)
+    # Punctuation, a bare double-quote, and an FTS5 operator keyword must
+    # never raise sqlite3.OperationalError -- they degrade to literal terms
+    # (or no hits) instead of crashing.
+    for bad_query in ['the plan (v2)', '"', 'notes AND', '(', '*']:
+        s.search_bm25(bad_query, 5)  # must not raise
+
+
 def test_kv_roundtrip(tmp_path):
     s = Storage.open(str(tmp_path / "t.db"))
     assert s.kv_get("offset") is None

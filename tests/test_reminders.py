@@ -55,6 +55,26 @@ def test_send_failure_retries_then_fails_after_max(tmp_path):
     assert row["attempts"] >= 3
 
 
+def test_no_transaction_held_open_across_delivery_send(tmp_path):
+    # Spec 10: the storage transaction that claims a reminder must close
+    # before Delivery.send runs, so a slow or failing send never holds a
+    # SQLite lock across a network call.
+    s = _due_reminder(tmp_path)
+
+    class AssertingDelivery:
+        def __init__(self, storage):
+            self.storage = storage
+            self.sent = []
+
+        def send(self, chat_id, text):
+            assert self.storage.conn.in_transaction is False
+            self.sent.append((chat_id, text))
+
+    d = AssertingDelivery(s)
+    assert run_due(s, d, _at(31), lease_seconds=120, max_attempts=5) == 1
+    assert len(d.sent) == 1
+
+
 def test_lease_blocks_double_claim_within_lease(tmp_path):
     s = _due_reminder(tmp_path)
     # First claim leases it; a second immediate pass (still under lease,

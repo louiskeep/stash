@@ -14,6 +14,18 @@ def _pack_f32(vector: list[float]) -> bytes:
     return struct.pack(f"{len(vector)}f", *vector)
 
 
+def _fts5_match_expr(query: str) -> str:
+    """Turn free-form user input into a safe FTS5 MATCH expression.
+
+    Every whitespace-delimited token is quoted as an FTS5 string literal, so
+    punctuation and operator keywords (AND/OR/NOT/*, an unbalanced quote or
+    paren, ...) are matched as literal text rather than parsed as syntax.
+    """
+    tokens = query.split()
+    quoted = ['"' + tok.replace('"', '""') + '"' for tok in tokens]
+    return " ".join(quoted)
+
+
 class Storage:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
@@ -109,11 +121,17 @@ class Storage:
     def search_bm25(self, query, limit) -> list[int]:
         if not query.strip():
             return []
-        rows = self.conn.execute(
-            "SELECT rowid FROM notes_fts WHERE notes_fts MATCH ?"
-            " ORDER BY bm25(notes_fts) LIMIT ?",
-            (query, limit),
-        ).fetchall()
+        match_expr = _fts5_match_expr(query)
+        if not match_expr:
+            return []
+        try:
+            rows = self.conn.execute(
+                "SELECT rowid FROM notes_fts WHERE notes_fts MATCH ?"
+                " ORDER BY bm25(notes_fts) LIMIT ?",
+                (match_expr, limit),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return []
         return [r["rowid"] for r in rows]
 
     def search_vec(self, vector, limit) -> list[int]:
