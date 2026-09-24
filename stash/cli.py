@@ -35,6 +35,13 @@ def main(argv=None, storage=None, embedder=None) -> int:
     if embedder is None:
         embedder = SentenceTransformerEmbedder(cfg.embed_model)
 
+    # Spec 6.11: startup includes crash repair. underived_note_ids() is a
+    # cheap query, so when nothing needs healing this adds no model-load
+    # cost; repair() only runs (and only then loads the embedder) when a
+    # prior crash left a note derived-incomplete.
+    if storage.underived_note_ids():
+        repair(storage, embedder)
+
     if args.cmd == "add":
         r = capture(storage, embedder, args.text, "cli", _now())
         print(r.receipt)

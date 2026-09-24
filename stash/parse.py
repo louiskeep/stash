@@ -1,4 +1,4 @@
-"""Deterministic note parsing for council.
+"""Deterministic note parsing for stash.
 
 No generative AI. The raw note is preserved verbatim and never altered.
 Structure (tags, category, intent, reminder time) is extracted with plain

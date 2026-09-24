@@ -83,3 +83,37 @@ def test_lease_blocks_double_claim_within_lease(tmp_path):
     second = s.claim_due_reminders(_at(31), lease_seconds=120)
     assert len(first) == 1
     assert second == []
+
+
+def test_stale_tick_completion_does_not_clobber_a_newer_sent_row(tmp_path):
+    # Models the gate's repro: tick 1 claims at 00:31. Its send() runs long
+    # enough that the lease (120s, cutoff 00:32) expires, so a nested tick
+    # at 00:34 reclaims the same reminder and delivers it successfully.
+    # Tick 1's own send() then fails. Without lease-owned completion, tick
+    # 1's failure handler flips the row tick 2 already marked 'sent' back
+    # to 'pending', and a later tick resends it.
+    s = _due_reminder(tmp_path)
+    inner_delivery = FakeDelivery()
+
+    class OutlastingDelivery:
+        """Simulates a send that outlives its lease: a nested tick reclaims
+        and delivers before this send finally fails."""
+
+        def __init__(self, storage, inner):
+            self.storage = storage
+            self.inner = inner
+
+        def send(self, chat_id, text):
+            run_due(self.storage, self.inner, _at(34), lease_seconds=120, max_attempts=5)
+            raise RuntimeError("outlasted its lease")
+
+    run_due(s, OutlastingDelivery(s, inner_delivery), _at(31),
+             lease_seconds=120, max_attempts=5)
+
+    assert len(inner_delivery.sent) == 1
+    row = s.conn.execute("SELECT status FROM reminders").fetchone()
+    assert row["status"] == "sent"  # not resurrected to 'pending' by the stale tick
+
+    later_delivery = FakeDelivery()
+    assert run_due(s, later_delivery, _at(40), lease_seconds=120, max_attempts=5) == 0
+    assert later_delivery.sent == []  # no repeated send

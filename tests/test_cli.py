@@ -1,6 +1,7 @@
 import stash.cli as cli_module
 from stash.cli import main
 from stash.embed import FakeEmbedder
+from stash.recall import search as recall_search
 from stash.storage import Storage
 
 
@@ -39,3 +40,17 @@ def test_cli_tags_lists_counts(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "#work (2)" in out
     assert "#urgent (1)" in out
+
+
+def test_startup_runs_crash_repair_before_dispatch(tmp_path, capsys):
+    s = Storage.open(str(tmp_path / "t.db"))
+    e = FakeEmbedder()
+    # Simulate a crash after the raw write: the note exists but was never
+    # derived, so it isn't indexed yet.
+    s.add_note("crashed before derive brown fox", "cli", "2026-09-24T00:00:00+00:00")
+    assert s.underived_note_ids() != []
+    assert recall_search(s, e, "brown fox") == []  # not indexed yet
+
+    assert main(["search", "brown fox"], storage=s, embedder=e) == 0
+    out = capsys.readouterr().out
+    assert "brown fox" in out  # startup repair healed it before search ran

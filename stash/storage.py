@@ -160,15 +160,22 @@ class Storage:
             ).fetchall()
         return rows
 
-    def mark_reminder_sent(self, rid, when):
+    def mark_reminder_sent(self, rid, when, expected_claimed_at):
+        # Lease-owned compare-and-swap: only complete the row if this tick's
+        # claim (expected_claimed_at) still holds. A tick whose claim was
+        # superseded by a later reclaim updates 0 rows and is a no-op,
+        # instead of clobbering a newer tick's completed 'sent' row.
         with self.conn:
             self.conn.execute(
                 "UPDATE reminders SET status='sent', sent_at=?, claimed_at=NULL"
-                " WHERE id=?", (when, rid))
+                " WHERE id=? AND claimed_at=?", (when, rid, expected_claimed_at))
 
-    def release_reminder(self, rid, max_attempts):
+    def release_reminder(self, rid, max_attempts, expected_claimed_at):
+        # Same lease-owned compare-and-swap as mark_reminder_sent: a stale
+        # tick's release must not resurrect a row another tick already
+        # completed.
         with self.conn:
             self.conn.execute(
                 "UPDATE reminders SET claimed_at=NULL,"
                 " status=CASE WHEN attempts>=? THEN 'failed' ELSE 'pending' END"
-                " WHERE id=?", (max_attempts, rid))
+                " WHERE id=? AND claimed_at=?", (max_attempts, rid, expected_claimed_at))

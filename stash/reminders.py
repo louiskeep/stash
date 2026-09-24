@@ -16,8 +16,9 @@ def run_due(storage, delivery, now: str, lease_seconds: int,
         try:
             delivery.send(row["chat_id"], render_reminder(row))  # outside any txn
         except Exception:
-            storage.release_reminder(row["id"], max_attempts)
+            storage.release_reminder(row["id"], max_attempts, row["claimed_at"])
         else:
-            storage.mark_reminder_sent(row["id"], datetime.now(timezone.utc).isoformat())
+            storage.mark_reminder_sent(
+                row["id"], datetime.now(timezone.utc).isoformat(), row["claimed_at"])
             delivered += 1
     return delivered
