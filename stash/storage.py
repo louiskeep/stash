@@ -1,0 +1,123 @@
+"""Typed storage operations over the stash SQLite schema.
+
+Transactions are short and never span a network call. FTS and vec tables are
+kept in sync here on every note write.
+"""
+
+import sqlite3
+import struct
+
+from stash.db import connect, migrate
+
+
+def _pack_f32(vector: list[float]) -> bytes:
+    return struct.pack(f"{len(vector)}f", *vector)
+
+
+class Storage:
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self.conn = conn
+
+    @classmethod
+    def open(cls, db_path: str, busy_timeout_ms: int = 5000) -> "Storage":
+        conn = connect(db_path, busy_timeout_ms)
+        migrate(conn)
+        return cls(conn)
+
+    def add_note(self, raw, source, created_at,
+                 source_chat_id=None, source_msg_id=None) -> int | None:
+        try:
+            with self.conn:
+                cur = self.conn.execute(
+                    "INSERT INTO notes(raw, source, source_chat_id, source_msg_id,"
+                    " created_at, derived_at) VALUES (?,?,?,?,?,NULL)",
+                    (raw, source, source_chat_id, source_msg_id, created_at),
+                )
+                return cur.lastrowid
+        except sqlite3.IntegrityError:
+            return None  # scoped dedupe key already present
+
+    def get_note(self, note_id) -> sqlite3.Row | None:
+        return self.conn.execute(
+            "SELECT * FROM notes WHERE id=?", (note_id,)).fetchone()
+
+    def set_tags(self, note_id, tags) -> None:
+        with self.conn:
+            self.conn.execute("DELETE FROM note_tags WHERE note_id=?", (note_id,))
+            self.conn.executemany(
+                "INSERT INTO note_tags(note_id, tag) VALUES (?,?)",
+                [(note_id, t) for t in tags],
+            )
+
+    def set_meta(self, note_id, category, intent, cluster_id=None) -> None:
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO note_meta(note_id, category, intent, cluster_id)"
+                " VALUES (?,?,?,?)"
+                " ON CONFLICT(note_id) DO UPDATE SET"
+                " category=excluded.category, intent=excluded.intent,"
+                " cluster_id=excluded.cluster_id",
+                (note_id, category, intent, cluster_id),
+            )
+
+    def set_embedding(self, note_id, vector) -> None:
+        row = self.get_note(note_id)
+        with self.conn:
+            # FTS external content: insert by rowid = note id. Guard the
+            # delete on a prior-index check: fts5's implicit-rowid DELETE
+            # reads the *current* backing row to work out which terms to
+            # remove, so issuing it before anything was ever indexed for
+            # this rowid corrupts the shadow index instead of no-op'ing.
+            indexed = self.conn.execute(
+                "SELECT 1 FROM notes_fts_docsize WHERE id=?", (note_id,)
+            ).fetchone()
+            if indexed:
+                self.conn.execute("DELETE FROM notes_fts WHERE rowid=?", (note_id,))
+            self.conn.execute(
+                "INSERT INTO notes_fts(rowid, raw) VALUES (?,?)",
+                (note_id, row["raw"]),
+            )
+            self.conn.execute("DELETE FROM vec_notes WHERE note_id=?", (note_id,))
+            self.conn.execute(
+                "INSERT INTO vec_notes(note_id, embedding) VALUES (?,?)",
+                (note_id, _pack_f32(vector)),
+            )
+
+    def mark_derived(self, note_id, when) -> None:
+        with self.conn:
+            self.conn.execute(
+                "UPDATE notes SET derived_at=? WHERE id=?", (when, note_id))
+
+    def underived_note_ids(self) -> list[int]:
+        return [r["id"] for r in self.conn.execute(
+            "SELECT id FROM notes WHERE derived_at IS NULL ORDER BY id")]
+
+    def kv_get(self, key) -> str | None:
+        r = self.conn.execute("SELECT value FROM kv WHERE key=?", (key,)).fetchone()
+        return r["value"] if r else None
+
+    def kv_set(self, key, value) -> None:
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO kv(key, value) VALUES (?,?)"
+                " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, value),
+            )
+
+    def search_bm25(self, query, limit) -> list[int]:
+        if not query.strip():
+            return []
+        rows = self.conn.execute(
+            "SELECT rowid FROM notes_fts WHERE notes_fts MATCH ?"
+            " ORDER BY bm25(notes_fts) LIMIT ?",
+            (query, limit),
+        ).fetchall()
+        return [r["rowid"] for r in rows]
+
+    def search_vec(self, vector, limit) -> list[int]:
+        rows = self.conn.execute(
+            "SELECT note_id FROM vec_notes"
+            " WHERE embedding MATCH ? AND k=? ORDER BY distance",
+            (_pack_f32(vector), limit),
+        ).fetchall()
+        return [r["note_id"] for r in rows]
