@@ -123,3 +123,34 @@ class Storage:
             (_pack_f32(vector), limit),
         ).fetchall()
         return [r["note_id"] for r in rows]
+
+    def claim_due_reminders(self, now, lease_seconds):
+        # Exclusive claim in one short transaction. A reminder is claimable if
+        # pending, due, and either never claimed or its lease has expired.
+        from datetime import datetime, timedelta
+        cutoff = (datetime.fromisoformat(now)
+                  - timedelta(seconds=lease_seconds)).isoformat()
+        with self.conn:
+            rows = self.conn.execute(
+                "UPDATE reminders SET claimed_at=?, attempts=attempts+1"
+                " WHERE id IN ("
+                "   SELECT id FROM reminders"
+                "   WHERE status='pending' AND fire_at<=?"
+                "     AND (claimed_at IS NULL OR claimed_at<?))"
+                " RETURNING *",
+                (now, now, cutoff),
+            ).fetchall()
+        return rows
+
+    def mark_reminder_sent(self, rid, when):
+        with self.conn:
+            self.conn.execute(
+                "UPDATE reminders SET status='sent', sent_at=?, claimed_at=NULL"
+                " WHERE id=?", (when, rid))
+
+    def release_reminder(self, rid, max_attempts):
+        with self.conn:
+            self.conn.execute(
+                "UPDATE reminders SET claimed_at=NULL,"
+                " status=CASE WHEN attempts>=? THEN 'failed' ELSE 'pending' END"
+                " WHERE id=?", (max_attempts, rid))
