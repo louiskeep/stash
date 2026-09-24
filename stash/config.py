@@ -33,7 +33,7 @@ def _int(env: Mapping[str, str], key: str, default: int) -> int:
 def load_config(env: Mapping[str, str]) -> Config:
     ids_raw = env.get("STASH_ALLOWED_SENDER_IDS", "")
     ids = tuple(part.strip() for part in ids_raw.split(",") if part.strip())
-    return Config(
+    config = Config(
         db_path=env.get("STASH_DB_PATH", "stash.db"),
         embed_model=env.get("STASH_EMBED_MODEL", "all-MiniLM-L6-v2"),
         web_bind=env.get("STASH_WEB_BIND", "127.0.0.1"),
@@ -47,3 +47,13 @@ def load_config(env: Mapping[str, str]) -> Config:
         reminder_max_attempts=_int(env, "STASH_REMINDER_MAX_ATTEMPTS", 5),
         busy_timeout_ms=_int(env, "STASH_BUSY_TIMEOUT_MS", 5000),
     )
+
+    # Validate that scheduler config values are positive
+    if config.reminder_max_attempts < 1:
+        raise ValueError(f"reminder_max_attempts must be >= 1, got {config.reminder_max_attempts}")
+    if config.reminder_lease_seconds < 1:
+        raise ValueError(f"reminder_lease_seconds must be >= 1, got {config.reminder_lease_seconds}")
+    if config.scheduler_tick_seconds < 1:
+        raise ValueError(f"scheduler_tick_seconds must be >= 1, got {config.scheduler_tick_seconds}")
+
+    return config
