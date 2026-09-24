@@ -1,7 +1,7 @@
 """Capture pipeline: durable raw write first, then derivation. Crash-safe."""
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from stash.parse import parse
 
@@ -37,7 +37,7 @@ def derive(storage, embedder, note_id: int, raw: str, created_at: str) -> str:
                 " ON CONFLICT(note_id) DO NOTHING",
                 (fire_at, note_id),
             )
-    storage.mark_derived(note_id, datetime.now().astimezone().isoformat())
+    storage.mark_derived(note_id, datetime.now(timezone.utc).isoformat())
     return parsed.intent
 
 
