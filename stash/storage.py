@@ -55,6 +55,12 @@ class Storage:
         return self.conn.execute(
             "SELECT * FROM notes WHERE id=?", (note_id,)).fetchone()
 
+    def get_note_by_source_key(self, source, source_chat_id, source_msg_id) -> sqlite3.Row | None:
+        return self.conn.execute(
+            "SELECT * FROM notes WHERE source=? AND source_chat_id=? AND source_msg_id=?",
+            (source, source_chat_id, source_msg_id),
+        ).fetchone()
+
     def set_tags(self, note_id, tags) -> None:
         with self.conn:
             self.conn.execute("DELETE FROM note_tags WHERE note_id=?", (note_id,))

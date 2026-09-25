@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 
+import stash.reminders as reminders
 from stash.capture import capture
 from stash.embed import FakeEmbedder
 from stash.reminders import run_due
@@ -19,6 +20,26 @@ class RecordingDelivery:
 
 def _at(minute):
     return datetime(2026, 9, 25, 0, minute, tzinfo=timezone.utc).isoformat()
+
+
+def _freeze_reminders_clock(monkeypatch, when: str) -> None:
+    """Pin stash.reminders' `datetime.now()` to `when`.
+
+    run_due stamps a failed send's backoff (and a successful one's sent_at)
+    with the real wall clock at that moment, not the tick's `now` argument.
+    Tests that drive run_due across several ticks on a fully simulated clock
+    need that moment pinned to the tick under test, or the real wall clock
+    (whatever it is when the suite runs) desyncs the lease math from the
+    simulated timestamps.
+    """
+    frozen = datetime.fromisoformat(when)
+
+    class _Frozen:
+        @staticmethod
+        def now(tz=None):
+            return frozen
+
+    monkeypatch.setattr(reminders, "datetime", _Frozen)
 
 
 def _due(tmp_path, n=1):
@@ -60,9 +81,10 @@ async def test_outage_does_not_exhaust_cap_in_one_tick(tmp_path):
     assert row["status"] == "pending"    # deferred, not failed
 
 
-async def test_backoff_then_retry_on_later_tick(tmp_path):
+async def test_backoff_then_retry_on_later_tick(tmp_path, monkeypatch):
     s = _due(tmp_path, n=1)
     d = RecordingDelivery(fail=True)
+    _freeze_reminders_clock(monkeypatch, _at(31))  # the tick's send fails "at" 00:31
     await run_due(s, d, _at(31), 120, 5, allowed_ids=("1000",))  # attempt 1, then deferred (leased)
     await run_due(s, d, _at(32), 120, 5, allowed_ids=("1000",))  # within backoff -> no new attempt
     assert s.conn.execute("SELECT attempts FROM reminders").fetchone()["attempts"] == 1
@@ -80,13 +102,14 @@ async def test_not_yet_due_is_not_delivered(tmp_path):
     assert d.sent == []
 
 
-async def test_send_failure_retries_then_fails_after_max(tmp_path):
+async def test_send_failure_retries_then_fails_after_max(tmp_path, monkeypatch):
     # Short lease: each tick is past the backoff window, so the reminder is
     # re-attempted once per tick until it reaches the cap and is failed --
     # this still proves the cap is enforced, now spaced by the backoff.
     s = _due(tmp_path)
     d = RecordingDelivery(fail=True)
     for m in range(31, 45):  # keep ticking; lease expires so it is reclaimable
+        _freeze_reminders_clock(monkeypatch, _at(m))  # this tick's send fails "at" _at(m)
         await run_due(s, d, _at(m), lease_seconds=1, max_attempts=3, allowed_ids=("1000",))
     row = s.conn.execute("SELECT status, attempts FROM reminders").fetchone()
     assert row["status"] == "failed"

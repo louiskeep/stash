@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from stash.capture import capture, repair
 from stash.embed import FakeEmbedder
+from stash.recall import search
 from stash.storage import Storage
 
 
@@ -62,6 +63,28 @@ def test_dedupe_returns_deduped_result(tmp_path):
     r2 = capture(s, FakeEmbedder(), "x", "telegram", _now(), "c1", "m1")
     assert r2.deduped is True
     assert r2.note_id is None
+
+
+def test_capture_heals_existing_underived_duplicate(tmp_path):
+    # The sync CLI path must self-heal too: a raw note written directly
+    # (e.g. by a prior capture that crashed before deriving) gets derived
+    # when the same (source, chat, msg) key is captured again.
+    s = Storage.open(str(tmp_path / "t.db"))
+    text = "remind me to call mom in 30min"
+    nid = s.add_note(text, "telegram", _now(), "c1", "m1")
+    assert s.get_note(nid)["derived_at"] is None
+
+    r = capture(s, FakeEmbedder(), text, "telegram", _now(), "c1", "m1")
+
+    assert r.deduped is True
+    assert r.note_id is None
+    row = s.get_note(nid)
+    assert row["derived_at"] is not None
+    results = search(s, FakeEmbedder(), "call mom", limit=5)
+    assert any(x.note_id == nid for x in results)
+    rem = s.conn.execute(
+        "SELECT status FROM reminders WHERE note_id=?", (nid,)).fetchone()
+    assert rem is not None and rem["status"] == "pending"
 
 
 def test_repair_rederives_unfinished_notes_idempotently(tmp_path):

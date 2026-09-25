@@ -48,7 +48,15 @@ async def run_due(storage, delivery, now: str, lease_seconds: int,
             # daemon serializes scheduler ticks with a lock (see the serve
             # loop, Task 6), so run_due never overlaps with itself in
             # production, which is what keeps this from happening.
-            storage.defer_reminder(row["id"], now, max_attempts, token)
+            #
+            # Stamp the deferral with a fresh timestamp taken here, at the
+            # actual failure, rather than reusing the tick's `now` (captured
+            # before the send started). A slow send that eats into its own
+            # lease would otherwise get a backoff window measured from
+            # before it failed, letting the next tick retry sooner than
+            # lease_seconds after the real failure.
+            storage.defer_reminder(
+                row["id"], datetime.now(timezone.utc).isoformat(), max_attempts, token)
         else:
             # Only count this as delivered if the CAS actually applied. If a
             # second, overlapping tick reclaimed and completed this same row

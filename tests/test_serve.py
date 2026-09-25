@@ -72,6 +72,70 @@ async def test_dedupe_on_redelivered_update(tmp_path):
     assert s.conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 1
 
 
+class _AlwaysFailEmbedder(FakeEmbedder):
+    def embed(self, text):
+        raise RuntimeError("embed boom")
+
+
+class _FlakyEmbedder(FakeEmbedder):
+    """Fails the first N embed() calls, then behaves like FakeEmbedder."""
+
+    def __init__(self, fail_times: int = 1):
+        super().__init__()
+        self._fail = fail_times
+
+    def embed(self, text):
+        if self._fail > 0:
+            self._fail -= 1
+            raise RuntimeError("transient embed failure")
+        return super().embed(text)
+
+
+async def test_embed_failure_leaves_raw_note_and_does_not_advance_offset(tmp_path):
+    # Gate finding NH1 (High): the daemon used to encode BEFORE capturing the
+    # raw note, so an embed() failure lost the note entirely. Raw-first means
+    # the note must survive even when embedding blows up.
+    s = Storage.open(str(tmp_path / "t.db"))
+    d = FakeAsyncDelivery()
+    ing = FakeIngest([[_msg(5, "remind me to call mom in 30min")]])
+    with pytest.raises(RuntimeError, match="embed boom"):
+        await handle_updates(s, _AlwaysFailEmbedder(), d, ing, ("42",), _now)
+    rows = s.conn.execute("SELECT derived_at FROM notes").fetchall()
+    assert len(rows) == 1                       # raw note survives the embed failure
+    assert rows[0]["derived_at"] is None
+    assert s.kv_get("tg_offset") is None         # offset must not advance past a failed update
+    assert s.conn.execute("SELECT COUNT(*) FROM reminders").fetchone()[0] == 0
+
+
+async def test_heal_on_redelivery_after_transient_embed_failure(tmp_path):
+    # Gate finding NH2 (High): a transient derive failure after the raw
+    # insert must not leave the note underived forever -- Telegram's retry on
+    # the still-unadvanced offset should heal it via the dedupe path.
+    s = Storage.open(str(tmp_path / "t.db"))
+    d = FakeAsyncDelivery()
+    text = "remind me to call mom in 30min"
+    ing = FakeIngest([[_msg(5, text)], [_msg(5, text)]])
+    embedder = _FlakyEmbedder(fail_times=1)
+
+    with pytest.raises(RuntimeError, match="transient embed failure"):
+        await handle_updates(s, embedder, d, ing, ("42",), _now)
+    assert s.kv_get("tg_offset") is None
+    row = s.conn.execute("SELECT id, derived_at FROM notes").fetchone()
+    assert row["derived_at"] is None
+
+    # Redelivery of the same update (Telegram retries since the offset never
+    # advanced) heals the underived duplicate.
+    await handle_updates(s, embedder, d, ing, ("42",), _now)
+    assert s.conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 1
+    healed = s.conn.execute(
+        "SELECT derived_at FROM notes WHERE id=?", (row["id"],)).fetchone()
+    assert healed["derived_at"] is not None
+    rem = s.conn.execute(
+        "SELECT status FROM reminders WHERE note_id=?", (row["id"],)).fetchone()
+    assert rem is not None and rem["status"] == "pending"
+    assert s.kv_get("tg_offset") == "6"          # update_id + 1, advanced on success
+
+
 def test_scrub_redacts_token_from_exception_repr():
     # Gate finding (High): the token lives in the Telegram request URL, so
     # any exception repr that happens to carry that URL (e.g. an httpx error)

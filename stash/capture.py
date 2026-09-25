@@ -1,5 +1,6 @@
 """Capture pipeline: durable raw write first, then derivation. Crash-safe."""
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -57,10 +58,41 @@ def capture(storage, embedder, raw, source, created_at,
     note_id = storage.add_note(
         raw, source, created_at, source_chat_id, source_msg_id)
     if note_id is None:
+        # Dedupe hit on (source, chat, msg). If the existing note from a
+        # prior capture never finished deriving (e.g. it crashed between the
+        # raw write and derive()), heal it now instead of leaving it stuck.
+        existing = storage.get_note_by_source_key(source, source_chat_id, source_msg_id)
+        if existing is not None and existing["derived_at"] is None:
+            derive(storage, embedder, existing["id"], existing["raw"], existing["created_at"])
         return CaptureResult(None, "note", "already stashed.", deduped=True)
     parsed = parse(raw)
     resolvable = parsed.intent == "reminder" and parsed.remind_in_seconds is not None
     intent = derive(storage, embedder, note_id, raw, created_at, embedding=embedding)
+    return CaptureResult(
+        note_id, intent, _receipt(parsed.intent, raw, resolvable), deduped=False)
+
+
+async def capture_async(storage, embedder, raw, source, created_at,
+                        source_chat_id=None, source_msg_id=None) -> CaptureResult:
+    """Raw-first capture with the embed call offloaded off the event loop.
+
+    The raw note is written before anything touches the embedder, so an
+    embed() failure (or any derive() failure) leaves a recoverable note
+    instead of losing it. See `capture()` for the sync/CLI counterpart.
+    """
+    note_id = storage.add_note(
+        raw, source, created_at, source_chat_id, source_msg_id)
+    if note_id is None:
+        existing = storage.get_note_by_source_key(source, source_chat_id, source_msg_id)
+        if existing is not None and existing["derived_at"] is None:
+            vec = await asyncio.to_thread(embedder.embed, existing["raw"])
+            derive(storage, embedder, existing["id"], existing["raw"],
+                   existing["created_at"], embedding=vec)
+        return CaptureResult(None, "note", "already stashed.", deduped=True)
+    parsed = parse(raw)
+    resolvable = parsed.intent == "reminder" and parsed.remind_in_seconds is not None
+    vec = await asyncio.to_thread(embedder.embed, raw)
+    intent = derive(storage, embedder, note_id, raw, created_at, embedding=vec)
     return CaptureResult(
         note_id, intent, _receipt(parsed.intent, raw, resolvable), deduped=False)
 
