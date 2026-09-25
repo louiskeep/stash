@@ -18,27 +18,13 @@ before implementation (R2).
   schema, storage, local embeddings, crash-safe capture, RRF hybrid recall,
   real-encoder eval gate, at-least-once reminder scheduler, ports + reindex +
   the `stash` CLI) works end to end through the CLI. 47 tests pass.
+- **Milestone 2: Telegram adapter**: shipped 2026-09-25 on `feat/m2-telegram`.
+  See `docs/RECENTLY-SHIPPED.md`. A `stash serve` asyncio daemon: Telegram
+  long-poll capture, `/find` search, `/recent`, `/help`, and reminder delivery,
+  with the reminder scheduler redesigned async (one-at-a-time claim, attempt-at-
+  send, backoff). 100 tests pass. dennis GO + Codex GO.
 
-## Milestone 2: Telegram adapter (current)
-
-Real ingest + delivery, brought ahead of the web UI to validate the port
-boundary against a real transport. The M2 redesign addresses all must-fix items
-upfront before the live scheduler loop.
-
-- [x] **T1: Telegram adapter.** Long-poll `IngestSource` with offset in `kv`,
-      private-sender-id authorization, `Delivery` with retries, terse receipts,
-      contract-tested against the M1 core. Wires a running poller + scheduler loop
-      with updated reminder-scheduler concurrency handling. Setup guide in
-      `docs/guides/telegram-setup.md`.
-
-  **Fixed in M2 redesign (was: must-fix before the live scheduler loop):**
-  - [x] Reminder-scheduler concurrency: updated `claim_one_due_reminder` to claim and send
-    one reminder at a time, eliminating the batch-claim race where sends can
-    outlast their lease and cause false failures.
-  - [x] Cap-vs-lease contract: clarified and enforced in the redesigned `run_due`
-    model. Scheduler proves the interaction holds before the loop is live.
-
-## Milestone 3: Web UI + ML clustering
+## Milestone 3: Web UI + ML clustering (current)
 
 - [ ] **W1: Web UI.** Jinja + htmx pages (Search, Timeline, Topics, Note detail,
       Reminders), password/session guard with secure cookies + CSRF, localhost
@@ -49,8 +35,16 @@ upfront before the live scheduler loop.
       (M1 runs as `python -m stash`), Dockerfile, online-backup guidance, run
       docs.
 
-## Follow-ups carried from M1 review (next slice)
+## Follow-ups carried from review (next slice)
 
+From M2 (Codex gate, below the merge bar):
+- Bound graceful shutdown so it respects the documented `max(25s, tick)`: check
+  the stop event between reminders in `run_due`'s drain and cap the in-flight
+  delivery timeout, and align the runbook's systemd stop timeout.
+- Reminders created via the CLI (no delivery chat) are never claimed by the
+  daemon; consider surfacing that rather than leaving them silently pending.
+
+From M1:
 - reindex hardening: NULL `derived_at` at reindex start so an interrupted
   reindex is `repair`-recoverable.
 - Add one keyword-overlap case to the recall eval fixture so RRF fusion (not
