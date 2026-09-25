@@ -8,7 +8,13 @@ class TelegramClient:
                  client: httpx.AsyncClient | None = None) -> None:
         self._token = token
         self._own = client is None
-        self._client = client or httpx.AsyncClient(base_url=base_url)
+        # get_updates long-polls for up to 25s (see below); httpx's 5s
+        # default read timeout would otherwise fire on every quiet poll and
+        # force an immediate retry. 35s comfortably exceeds that wait. Only
+        # applied to a client we create ourselves -- an injected client (as
+        # tests pass) keeps whatever timeout its owner configured.
+        self._client = client or httpx.AsyncClient(
+            base_url=base_url, timeout=httpx.Timeout(35.0))
 
     def _path(self, method: str) -> str:
         return f"/bot{self._token}/{method}"

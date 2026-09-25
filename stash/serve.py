@@ -27,7 +27,21 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-async def handle_updates(storage, embedder, delivery, ingest, allowed_ids, now_fn) -> None:
+def _scrub(text: str, token: str | None) -> str:
+    """Redact the bot token from text bound for stderr.
+
+    The token lives in the Telegram request URL by design (see
+    telegram_client.py), so any exception whose repr happens to carry that
+    URL would otherwise leak it into logs. Returns `text` unchanged when
+    `token` is falsy.
+    """
+    if token:
+        return text.replace(token, "***")
+    return text
+
+
+async def handle_updates(storage, embedder, delivery, ingest, allowed_ids, now_fn,
+                         token: str | None = None) -> None:
     """One poll+dispatch pass.
 
     Polls from the stored `tg_offset`, then for each update in order: handles
@@ -49,16 +63,18 @@ async def handle_updates(storage, embedder, delivery, ingest, allowed_ids, now_f
                 try:
                     await delivery.send(msg.chat_id, reply)
                 except Exception as e:
-                    print(f"stash serve: reply send failed: {e!r}", file=sys.stderr)
+                    print(f"stash serve: reply send failed: {_scrub(repr(e), token)}",
+                          file=sys.stderr)
         # else: unauthorized / group / non-text -> skip, but still advance.
         storage.kv_set("tg_offset", str(msg.update_id + 1))
 
 
-async def scheduler_tick(storage, delivery, lease, max_attempts, now_fn, lock) -> None:
+async def scheduler_tick(storage, delivery, lease, max_attempts, now_fn, lock,
+                         allowed_ids) -> None:
     if lock.locked():
         return
     async with lock:
-        await run_due(storage, delivery, now_fn(), lease, max_attempts)
+        await run_due(storage, delivery, now_fn(), lease, max_attempts, allowed_ids)
 
 
 def acquire_single_instance(db_path: str):
@@ -126,18 +142,22 @@ async def serve(config) -> None:
         while not stop.is_set():
             try:
                 await handle_updates(storage, embedder, delivery, ingest,
-                                     config.allowed_sender_ids, _utc_now)
+                                     config.allowed_sender_ids, _utc_now,
+                                     config.telegram_bot_token)
             except Exception as e:
-                print(f"stash serve: poll error: {e!r}", file=sys.stderr)
+                print(f"stash serve: poll error: {_scrub(repr(e), config.telegram_bot_token)}",
+                      file=sys.stderr)
                 await asyncio.sleep(1)
 
     async def sched_loop():
         while not stop.is_set():
             try:
                 await scheduler_tick(storage, delivery, config.reminder_lease_seconds,
-                                     config.reminder_max_attempts, _utc_now, sched_lock)
+                                     config.reminder_max_attempts, _utc_now, sched_lock,
+                                     config.allowed_sender_ids)
             except Exception as e:
-                print(f"stash serve: scheduler error: {e!r}", file=sys.stderr)
+                print(f"stash serve: scheduler error: "
+                      f"{_scrub(repr(e), config.telegram_bot_token)}", file=sys.stderr)
             await asyncio.sleep(config.scheduler_tick_seconds)
 
     try:

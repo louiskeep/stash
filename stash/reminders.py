@@ -12,7 +12,7 @@ def render_reminder(storage, row) -> str:
 
 
 async def run_due(storage, delivery, now: str, lease_seconds: int,
-                  max_attempts: int) -> int:
+                  max_attempts: int, allowed_ids) -> int:
     # Terminalize any reminder that hit the attempt cap while stuck
     # 'pending' (its previous tick crashed/hung before deferring it), so
     # claim_one_due_reminder's attempts<max_attempts guard doesn't leave it
@@ -22,7 +22,10 @@ async def run_due(storage, delivery, now: str, lease_seconds: int,
     storage.fail_exhausted_reminders(now, max_attempts, lease_seconds)
     delivered = 0
     while True:
-        row = storage.claim_one_due_reminder(now, lease_seconds, max_attempts)
+        # allowed_ids is the CURRENT allow-list, re-checked on every claim,
+        # not whatever allow-list held when the reminder was captured: a
+        # sender de-authorized since must never be delivered to.
+        row = storage.claim_one_due_reminder(now, lease_seconds, max_attempts, allowed_ids)
         if row is None:
             break
         token = row["claimed_at"]

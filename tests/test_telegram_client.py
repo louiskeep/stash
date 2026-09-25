@@ -26,6 +26,17 @@ async def test_send_message_posts_chat_and_text():
     assert seen["chat_id"] == "c1" and seen["text"] == "hello"
 
 
+async def test_own_client_gets_a_timeout_that_exceeds_the_long_poll_wait():
+    # get_updates long-polls for 25s; httpx's 5s default read timeout would
+    # fire on every quiet poll and force an immediate retry. A client we
+    # create ourselves (no injected client) must use a longer timeout.
+    tc = TelegramClient("TOKEN")
+    try:
+        assert tc._client.timeout.read >= 30
+    finally:
+        await tc.aclose()  # no network call made
+
+
 async def test_error_does_not_leak_token_or_text():
     def handler(request):
         return httpx.Response(403, json={"ok": False, "description": "forbidden"})

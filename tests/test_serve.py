@@ -3,7 +3,9 @@ from datetime import datetime, timezone
 import pytest
 
 from stash.config import Config
-from stash.serve import acquire_single_instance, handle_updates, serve, _validate_config
+from stash.serve import (
+    acquire_single_instance, handle_updates, serve, _validate_config, _scrub,
+)
 from stash.embed import FakeEmbedder
 from stash.ports import IncomingMessage, FakeAsyncDelivery
 from stash.storage import Storage
@@ -68,6 +70,22 @@ async def test_dedupe_on_redelivered_update(tmp_path):
     await handle_updates(s, FakeEmbedder(), d, ing, ("42",), _now)
     await handle_updates(s, FakeEmbedder(), d, ing, ("42",), _now)
     assert s.conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 1
+
+
+def test_scrub_redacts_token_from_exception_repr():
+    # Gate finding (High): the token lives in the Telegram request URL, so
+    # any exception repr that happens to carry that URL (e.g. an httpx error)
+    # must not reach stderr with the token intact.
+    token = "123456:SECRET-BOT-TOKEN"
+    e = RuntimeError(f"connect failed: https://api.telegram.org/bot{token}/getUpdates")
+    scrubbed = _scrub(repr(e), token)
+    assert "***" in scrubbed
+    assert token not in scrubbed
+
+
+def test_scrub_leaves_text_unchanged_when_token_falsy():
+    assert _scrub("some error text", None) == "some error text"
+    assert _scrub("some error text", "") == "some error text"
 
 
 def test_acquire_single_instance_raises_on_second_acquire(tmp_path):

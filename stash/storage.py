@@ -142,7 +142,7 @@ class Storage:
         ).fetchall()
         return [r["note_id"] for r in rows]
 
-    def claim_one_due_reminder(self, now, lease_seconds, max_attempts):
+    def claim_one_due_reminder(self, now, lease_seconds, max_attempts, allowed_ids):
         # Claim exactly one reminder per call: pending, due, under the
         # attempt cap, and either never claimed or its lease has expired.
         # One-at-a-time (vs. M1's batch claim) closes the window where a
@@ -151,13 +151,21 @@ class Storage:
         # from under it -- the next row is only claimed once the current
         # one is fully resolved (sent or deferred). Does NOT increment
         # attempts; that happens at send time via record_attempt.
-        # Excludes rows with a NULL chat_id: a reminder captured from a
-        # channel with no delivery target (e.g. the CLI) has nowhere to
-        # send, so it stays pending indefinitely rather than being claimed,
-        # failed to deliver, and churned to 'failed'.
+        # Only claims rows whose chat_id is in the CURRENT allow-list
+        # (`allowed_ids`), not whatever allow-list existed when the
+        # reminder was created: a sender removed from
+        # STASH_ALLOWED_SENDER_IDS after their reminder was captured must
+        # never receive it. A NULL chat_id (e.g. a CLI-captured note with
+        # no delivery target) can never match an IN (...) list, so it stays
+        # pending indefinitely rather than being claimed, failed to
+        # deliver, and churned to 'failed' -- the old explicit "IS NOT
+        # NULL" guard is subsumed by this membership check.
+        if not allowed_ids:
+            return None  # nobody currently allowed; an empty IN () is invalid SQL anyway
         from datetime import datetime, timedelta
         cutoff = (datetime.fromisoformat(now)
                   - timedelta(seconds=lease_seconds)).isoformat()
+        placeholders = ",".join("?" for _ in allowed_ids)
         with self.conn:
             return self.conn.execute(
                 "UPDATE reminders SET claimed_at=?"
@@ -165,10 +173,10 @@ class Storage:
                 "   SELECT id FROM reminders"
                 "   WHERE status='pending' AND fire_at<=? AND attempts<?"
                 "     AND (claimed_at IS NULL OR claimed_at<?)"
-                "     AND chat_id IS NOT NULL"
+                f"     AND chat_id IN ({placeholders})"
                 "   ORDER BY fire_at, id LIMIT 1)"
                 " RETURNING *",
-                (now, now, max_attempts, cutoff),
+                (now, now, max_attempts, cutoff, *allowed_ids),
             ).fetchone()
 
     def record_attempt(self, rid, expected_claimed_at) -> bool:

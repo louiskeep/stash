@@ -103,7 +103,13 @@ Updates are handled strictly in `update_id` order. After each update is fully
 handled, the offset in `kv` advances to that `update_id + 1`. A capture is
 fully handled once its note is committed; the receipt reply is best-effort,
 and its failure does not block the offset, so a persistently failing send
-can never stall later updates. A rejected sender, a group/non-text update, or
+can never stall later updates. The same best-effort rule applies to command
+replies (`/find`, `/recent`, `/help`): the command is fully handled once it
+runs, and a failed reply is logged but does not block the offset either.
+Treating every reply the same way, capture receipt or command reply, keeps
+one broken outbound send from stalling the whole update queue; for a
+single-user tool, the person on the other end can just re-issue a command
+whose reply failed to arrive. A rejected sender, a group/non-text update, or
 an unsupported update is simply skipped and the offset still advances. The
 offset is never advanced past an update whose note commit did not complete,
 so a crash re-reads from the last fully-handled update. Telegram may then
@@ -192,8 +198,8 @@ Acceptance:
 - **Ack ordering + crash windows:** the offset advances to `update_id+1` only
   after full handling; a simulated crash after capture-commit but before ack
   re-reads that update (idempotent via dedupe); a crash mid-batch re-reads from
-  the first unacked update; a failed command reply does not advance the offset
-  past it.
+  the first unacked update; a failed command reply is logged but still
+  advances the offset past it, the same as a failed capture receipt.
 - **/find (awaited):** `/find <query>` awaits the send and replies with the
   intended note among top results (real encoder in the retrieval test); empty
   query or no hit replies "nothing found" without raising. A stubbed async send

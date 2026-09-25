@@ -98,6 +98,8 @@ The bot only responds to private direct messages from allow-listed users. Group 
 
 Text notes pass through Telegram's servers for delivery. Stash stores the note text locally in your SQLite database. Processing and storage always happen on your machine.
 
+The bot token is embedded in every Telegram API request URL by design. Do not enable httpx or other HTTP wire debug logging in production, since that would print the token straight into your logs.
+
 ## Graceful Shutdown
 
 When you stop the bot with Ctrl+C or send it a SIGTERM signal, it gracefully finishes the current long-poll cycle before exiting. This can take up to about `max(25s long-poll timeout, STASH_SCHEDULER_TICK_SECONDS)`. If you run the bot under a process manager (systemd, supervisor, etc.), set a generous stop timeout so the graceful shutdown completes:

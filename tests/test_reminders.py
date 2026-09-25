@@ -36,16 +36,16 @@ def _due(tmp_path, n=1):
 async def test_delivers_each_due_reminder_once(tmp_path):
     s = _due(tmp_path, n=2)
     d = RecordingDelivery()
-    assert await run_due(s, d, _at(31), 120, 5) == 2
+    assert await run_due(s, d, _at(31), 120, 5, allowed_ids=("1000",)) == 2
     assert len(d.sent) == 2
-    assert await run_due(s, d, _at(32), 120, 5) == 0  # already sent
+    assert await run_due(s, d, _at(32), 120, 5, allowed_ids=("1000",)) == 0  # already sent
     assert len(d.sent) == 2  # no repeated send on the follow-up tick
 
 
 async def test_reminder_text_is_the_note_not_the_id(tmp_path):
     s = _due(tmp_path, n=1)
     d = RecordingDelivery()
-    await run_due(s, d, _at(31), 120, 5)
+    await run_due(s, d, _at(31), 120, 5, allowed_ids=("1000",))
     assert "task0" in d.sent[0][1]
 
 
@@ -54,7 +54,7 @@ async def test_outage_does_not_exhaust_cap_in_one_tick(tmp_path):
     # most once (the backoff defers it), not spin to the cap in a single tick.
     s = _due(tmp_path, n=1)
     d = RecordingDelivery(fail=True)
-    await run_due(s, d, _at(31), 120, 5)
+    await run_due(s, d, _at(31), 120, 5, allowed_ids=("1000",))
     row = s.conn.execute("SELECT status, attempts FROM reminders").fetchone()
     assert row["attempts"] == 1          # exactly one attempt this tick
     assert row["status"] == "pending"    # deferred, not failed
@@ -63,11 +63,11 @@ async def test_outage_does_not_exhaust_cap_in_one_tick(tmp_path):
 async def test_backoff_then_retry_on_later_tick(tmp_path):
     s = _due(tmp_path, n=1)
     d = RecordingDelivery(fail=True)
-    await run_due(s, d, _at(31), 120, 5)          # attempt 1, then deferred (leased)
-    await run_due(s, d, _at(32), 120, 5)          # within backoff -> no new attempt
+    await run_due(s, d, _at(31), 120, 5, allowed_ids=("1000",))  # attempt 1, then deferred (leased)
+    await run_due(s, d, _at(32), 120, 5, allowed_ids=("1000",))  # within backoff -> no new attempt
     assert s.conn.execute("SELECT attempts FROM reminders").fetchone()["attempts"] == 1
     d.fail = False
-    await run_due(s, d, _at(34), 120, 5)          # 00:34 > 00:31 + 120s -> retry
+    await run_due(s, d, _at(34), 120, 5, allowed_ids=("1000",))  # 00:34 > 00:31 + 120s -> retry
     row = s.conn.execute("SELECT status, attempts FROM reminders").fetchone()
     assert d.sent and row["status"] == "sent" and row["attempts"] == 2
 
@@ -75,7 +75,8 @@ async def test_backoff_then_retry_on_later_tick(tmp_path):
 async def test_not_yet_due_is_not_delivered(tmp_path):
     s = _due(tmp_path)
     d = RecordingDelivery()
-    assert await run_due(s, d, _at(10), lease_seconds=120, max_attempts=5) == 0
+    assert await run_due(s, d, _at(10), lease_seconds=120, max_attempts=5,
+                         allowed_ids=("1000",)) == 0
     assert d.sent == []
 
 
@@ -86,7 +87,7 @@ async def test_send_failure_retries_then_fails_after_max(tmp_path):
     s = _due(tmp_path)
     d = RecordingDelivery(fail=True)
     for m in range(31, 45):  # keep ticking; lease expires so it is reclaimable
-        await run_due(s, d, _at(m), lease_seconds=1, max_attempts=3)
+        await run_due(s, d, _at(m), lease_seconds=1, max_attempts=3, allowed_ids=("1000",))
     row = s.conn.execute("SELECT status, attempts FROM reminders").fetchone()
     assert row["status"] == "failed"
     assert row["attempts"] >= 3
@@ -108,7 +109,8 @@ async def test_no_transaction_held_open_across_delivery_send(tmp_path):
             self.sent.append((chat_id, text))
 
     d = AssertingDelivery(s)
-    assert await run_due(s, d, _at(31), lease_seconds=120, max_attempts=5) == 1
+    assert await run_due(s, d, _at(31), lease_seconds=120, max_attempts=5,
+                         allowed_ids=("1000",)) == 1
     assert len(d.sent) == 1
 
 
@@ -116,7 +118,8 @@ def test_mark_reminder_sent_reports_whether_its_cas_applied(tmp_path):
     # run_due only counts a delivery when this returns True, so a stale
     # tick's no-op mark must not be mistaken for a real completion.
     s = _due(tmp_path)
-    row = s.claim_one_due_reminder(_at(31), lease_seconds=120, max_attempts=5)
+    row = s.claim_one_due_reminder(_at(31), lease_seconds=120, max_attempts=5,
+                                   allowed_ids=("1000",))
     assert row is not None
 
     stale_token = "not-the-real-claimed-at"
@@ -135,8 +138,10 @@ def test_lease_blocks_double_claim_within_lease(tmp_path):
     s = _due(tmp_path)
     # First claim leases it; a second immediate claim (still under lease,
     # simulating a concurrent tick) claims nothing.
-    first = s.claim_one_due_reminder(_at(31), lease_seconds=120, max_attempts=5)
-    second = s.claim_one_due_reminder(_at(31), lease_seconds=120, max_attempts=5)
+    first = s.claim_one_due_reminder(_at(31), lease_seconds=120, max_attempts=5,
+                                     allowed_ids=("1000",))
+    second = s.claim_one_due_reminder(_at(31), lease_seconds=120, max_attempts=5,
+                                      allowed_ids=("1000",))
     assert first is not None
     assert second is None
 
@@ -161,18 +166,19 @@ async def test_stale_tick_completion_does_not_clobber_a_newer_sent_row(tmp_path)
 
         async def send(self, chat_id, text):
             await run_due(self.storage, self.inner, _at(34),
-                          lease_seconds=120, max_attempts=5)
+                          lease_seconds=120, max_attempts=5, allowed_ids=("1000",))
             raise RuntimeError("outlasted its lease")
 
     await run_due(s, OutlastingDelivery(s, inner_delivery), _at(31),
-                  lease_seconds=120, max_attempts=5)
+                  lease_seconds=120, max_attempts=5, allowed_ids=("1000",))
 
     assert len(inner_delivery.sent) == 1
     row = s.conn.execute("SELECT status FROM reminders").fetchone()
     assert row["status"] == "sent"  # not resurrected to 'pending' by the stale tick
 
     later_delivery = RecordingDelivery()
-    assert await run_due(s, later_delivery, _at(40), lease_seconds=120, max_attempts=5) == 0
+    assert await run_due(s, later_delivery, _at(40), lease_seconds=120, max_attempts=5,
+                         allowed_ids=("1000",)) == 0
     assert later_delivery.sent == []  # no repeated send
 
 
@@ -218,12 +224,13 @@ async def test_stale_tick_full_drain_during_send_does_not_double_send_other_remi
             self.calls += 1
             if self.calls == 1:
                 await run_due(self.storage, self.inner, _at(34),
-                              lease_seconds=120, max_attempts=5)
+                              lease_seconds=120, max_attempts=5, allowed_ids=("1000",))
             await super().send(chat_id, text)
 
     tick_b_delivery = TaggedDelivery("B")
     tick_a_delivery = TickAOutlastsLease(s, tick_b_delivery)
-    await run_due(s, tick_a_delivery, _at(31), lease_seconds=120, max_attempts=5)
+    await run_due(s, tick_a_delivery, _at(31), lease_seconds=120, max_attempts=5,
+                  allowed_ids=("1000",))
 
     by_text: dict[str, list[str]] = {}
     for tag, _chat_id, text in sent_log:
@@ -267,7 +274,8 @@ async def test_crash_before_defer_does_not_bypass_attempt_cap(tmp_path):
     max_attempts = 3
     for m in range(31, 60):  # far more ticks than max_attempts; short lease
         try:                 # keeps it reclaimable every time despite the
-            await run_due(s, d, _at(m), lease_seconds=1, max_attempts=max_attempts)
+            await run_due(s, d, _at(m), lease_seconds=1, max_attempts=max_attempts,
+                          allowed_ids=("1000",))
         except Crash:
             pass  # the tick "crashed"; a fresh tick resumes next minute
 
@@ -296,7 +304,8 @@ def test_fail_exhausted_reminders_does_not_clobber_an_owned_final_attempt(tmp_pa
     # cycles that never trip the cap (each models a failed send that gets
     # backed off, not exhausted).
     for m in range(31, 33):
-        row = s.claim_one_due_reminder(_at(m), lease_seconds, max_attempts)
+        row = s.claim_one_due_reminder(_at(m), lease_seconds, max_attempts,
+                                       allowed_ids=("1000",))
         assert row is not None
         assert s.record_attempt(row["id"], row["claimed_at"])
         s.defer_reminder(row["id"], _at(m), max_attempts, row["claimed_at"])
@@ -304,7 +313,8 @@ def test_fail_exhausted_reminders_does_not_clobber_an_owned_final_attempt(tmp_pa
     # The final attempt: this claim brings attempts to max_attempts. The
     # owner now holds a live lease starting at owner_now.
     owner_now = _at(33)
-    row = s.claim_one_due_reminder(owner_now, lease_seconds, max_attempts)
+    row = s.claim_one_due_reminder(owner_now, lease_seconds, max_attempts,
+                                   allowed_ids=("1000",))
     assert row is not None
     owner_token = row["claimed_at"]
     assert owner_token == owner_now
@@ -341,10 +351,11 @@ async def test_null_chat_id_reminder_is_never_claimed_or_delivered(tmp_path):
     row = s.conn.execute("SELECT chat_id FROM reminders").fetchone()
     assert row["chat_id"] is None
 
-    assert s.claim_one_due_reminder(_at(31), lease_seconds=120, max_attempts=5) is None
+    assert s.claim_one_due_reminder(_at(31), lease_seconds=120, max_attempts=5,
+                                    allowed_ids=("1000",)) is None
 
     d = RecordingDelivery()
-    assert await run_due(s, d, _at(31), 120, 5) == 0
+    assert await run_due(s, d, _at(31), 120, 5, allowed_ids=("1000",)) == 0
     assert d.sent == []
     still = s.conn.execute("SELECT status, attempts FROM reminders").fetchone()
     assert still["status"] == "pending"
@@ -356,5 +367,37 @@ async def test_reminder_with_chat_id_is_still_claimed_when_due(tmp_path):
     capture(s, FakeEmbedder(), "remind me in 30min to task-with-target", "cli", _at(0),
             source_chat_id="1000")
     d = RecordingDelivery()
-    assert await run_due(s, d, _at(31), 120, 5) == 1
+    assert await run_due(s, d, _at(31), 120, 5, allowed_ids=("1000",)) == 1
     assert len(d.sent) == 1
+
+
+async def test_deauthorized_sender_reminder_is_never_claimed_or_delivered(tmp_path):
+    # Gate finding (High): a reminder captured while its chat_id was
+    # allow-listed must not be delivered once that sender is removed from
+    # STASH_ALLOWED_SENDER_IDS. The allow-list is re-checked at CLAIM time
+    # against the CURRENT list, not whatever list held at capture time.
+    s = _due(tmp_path)  # reminder's chat_id is "1000"
+    d = RecordingDelivery()
+    # "1000" has since been removed from the allow-list; only "42" remains.
+    assert await run_due(s, d, _at(31), 120, 5, allowed_ids=("42",)) == 0
+    assert d.sent == []
+    row = s.conn.execute("SELECT status, attempts FROM reminders").fetchone()
+    assert row["status"] == "pending"
+    assert row["attempts"] == 0
+
+
+async def test_currently_allowed_sender_reminder_is_delivered(tmp_path):
+    # The positive counterpart: a reminder whose chat_id IS in the current
+    # allow-list still delivers normally.
+    s = _due(tmp_path)  # reminder's chat_id is "1000"
+    d = RecordingDelivery()
+    assert await run_due(s, d, _at(31), 120, 5, allowed_ids=("1000",)) == 1
+    assert d.sent and d.sent[0][0] == "1000"
+
+
+def test_claim_one_due_reminder_with_empty_allowlist_claims_nothing(tmp_path):
+    # An empty allow-list must not build an invalid `IN ()` clause; it must
+    # simply claim nothing.
+    s = _due(tmp_path)
+    assert s.claim_one_due_reminder(_at(31), lease_seconds=120, max_attempts=5,
+                                    allowed_ids=()) is None
