@@ -1,6 +1,7 @@
 """stash command line: capture and recall without a bot or web UI."""
 
 import argparse
+import asyncio
 import os
 import sys
 from datetime import datetime, timezone
@@ -27,7 +28,13 @@ def main(argv=None, storage=None, embedder=None) -> int:
     sub.add_parser("reindex")
     sub.add_parser("repair")
     sub.add_parser("tags")  # deterministic Topics: tag -> count
+    sub.add_parser("serve")  # Telegram poller + reminder scheduler daemon
     args = parser.parse_args(argv)
+
+    if args.cmd == "serve":
+        from stash.serve import serve
+        asyncio.run(serve(load_config(os.environ)))
+        return 0
 
     cfg = load_config(os.environ) if storage is None or embedder is None else None
     if storage is None:
