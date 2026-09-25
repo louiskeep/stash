@@ -197,16 +197,6 @@ class Storage:
                 " WHERE id=? AND claimed_at=?",
                 (max_attempts, max_attempts, now, rid, expected_claimed_at))
 
-    def reminder_claim_token(self, rid) -> str | None:
-        # Current claimed_at for a reminder, or None if it has none (never
-        # claimed, or already completed/reclaimed). run_due compares this
-        # against the token a tick claimed a row with, immediately before
-        # sending, to detect that another tick has since reclaimed or
-        # completed the row.
-        row = self.conn.execute(
-            "SELECT claimed_at FROM reminders WHERE id=?", (rid,)).fetchone()
-        return row["claimed_at"] if row else None
-
     def fail_exhausted_reminders(self, now, max_attempts, lease_seconds):
         # Terminalize reminders that hit the attempt cap while still
         # 'pending' (e.g. a tick that recorded the final attempt but
@@ -234,12 +224,15 @@ class Storage:
                 (now, max_attempts, cutoff),
             )
 
-    def mark_reminder_sent(self, rid, when, expected_claimed_at):
+    def mark_reminder_sent(self, rid, when, expected_claimed_at) -> bool:
         # Lease-owned compare-and-swap: only complete the row if this tick's
         # claim (expected_claimed_at) still holds. A tick whose claim was
         # superseded by a later reclaim updates 0 rows and is a no-op,
-        # instead of clobbering a newer tick's completed 'sent' row.
+        # instead of clobbering a newer tick's completed 'sent' row. Returns
+        # whether the CAS applied, so a caller can tell a real completion
+        # from a no-op.
         with self.conn:
-            self.conn.execute(
+            cur = self.conn.execute(
                 "UPDATE reminders SET status='sent', sent_at=?, claimed_at=NULL"
                 " WHERE id=? AND claimed_at=?", (when, rid, expected_claimed_at))
+            return cur.rowcount == 1

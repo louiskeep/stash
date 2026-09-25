@@ -107,6 +107,25 @@ async def test_no_transaction_held_open_across_delivery_send(tmp_path):
     assert len(d.sent) == 1
 
 
+def test_mark_reminder_sent_reports_whether_its_cas_applied(tmp_path):
+    # run_due only counts a delivery when this returns True, so a stale
+    # tick's no-op mark must not be mistaken for a real completion.
+    s = _due(tmp_path)
+    row = s.claim_one_due_reminder(_at(31), lease_seconds=120, max_attempts=5)
+    assert row is not None
+
+    stale_token = "not-the-real-claimed-at"
+    assert s.mark_reminder_sent(row["id"], _at(32), stale_token) is False
+    still_pending = s.conn.execute(
+        "SELECT status FROM reminders WHERE id=?", (row["id"],)).fetchone()
+    assert still_pending["status"] == "pending"  # the no-op left it untouched
+
+    assert s.mark_reminder_sent(row["id"], _at(32), row["claimed_at"]) is True
+    sent = s.conn.execute(
+        "SELECT status FROM reminders WHERE id=?", (row["id"],)).fetchone()
+    assert sent["status"] == "sent"
+
+
 def test_lease_blocks_double_claim_within_lease(tmp_path):
     s = _due(tmp_path)
     # First claim leases it; a second immediate claim (still under lease,

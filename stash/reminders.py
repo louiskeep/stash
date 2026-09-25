@@ -36,9 +36,26 @@ async def run_due(storage, delivery, now: str, lease_seconds: int,
             await delivery.send(row["chat_id"], render_reminder(storage, row))
         except Exception:
             # Defer: leave leased for lease_seconds (retry backoff) or fail at cap.
+            #
+            # If this send actually outlived its own lease, a second,
+            # overlapping run_due could have reclaimed and delivered this
+            # same row before this except-block runs. defer_reminder's CAS
+            # then no-ops (claimed_at no longer matches), so it will not
+            # flip an already-sent row back to pending or failed here. The
+            # daemon serializes scheduler ticks with a lock (see the serve
+            # loop, Task 6), so run_due never overlaps with itself in
+            # production, which is what keeps this from happening.
             storage.defer_reminder(row["id"], now, max_attempts, token)
         else:
-            storage.mark_reminder_sent(
-                row["id"], datetime.now(timezone.utc).isoformat(), token)
-            delivered += 1
+            # Only count this as delivered if the CAS actually applied. If a
+            # second, overlapping tick reclaimed and completed this same row
+            # first (only possible with overlapping run_due calls, which the
+            # daemon's serialize-lock prevents in production), this send
+            # still happened -- a real, spec-documented at-least-once
+            # duplicate -- but this tick's own mark is a no-op, so it must
+            # not add to delivered or the count would overstate what this
+            # call actually persisted.
+            if storage.mark_reminder_sent(
+                    row["id"], datetime.now(timezone.utc).isoformat(), token):
+                delivered += 1
     return delivered
