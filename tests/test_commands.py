@@ -47,3 +47,20 @@ async def test_help_and_empty(tmp_path):
     assert "/find" in help_reply
     empty_reply = await handle_message(s, FakeEmbedder(), _msg("   "), _now())
     assert empty_reply is None
+
+
+async def test_find_with_leading_whitespace(tmp_path):
+    """Test that leading whitespace in /find doesn't corrupt the query."""
+    s = Storage.open(str(tmp_path / "t.db"))
+    await handle_message(s, FakeEmbedder(), _msg("the quick brown fox"), _now())
+    reply = await handle_message(s, FakeEmbedder(), _msg("   /find brown"), _now())
+    assert "brown" in reply
+
+
+async def test_plain_text_with_leading_whitespace_captured_verbatim(tmp_path):
+    """Test that plain text with leading whitespace is captured unchanged."""
+    s = Storage.open(str(tmp_path / "t.db"))
+    original_text = "   buy milk with leading spaces"
+    await handle_message(s, FakeEmbedder(), _msg(original_text), _now())
+    row = s.conn.execute("SELECT raw FROM notes").fetchone()
+    assert row["raw"] == original_text

@@ -30,9 +30,10 @@ async def handle_message(storage, embedder, msg, now: str) -> str | None:
     text = msg.text or ""
     if not text.strip():
         return None
-    first = text.split(maxsplit=1)[0]
+    parts = text.split(maxsplit=1)
+    first = parts[0] if parts else ""
     if first in _COMMANDS:
-        rest = text[len(first):].strip()
+        rest = parts[1].strip() if len(parts) > 1 else ""
         if first == "/help":
             reply = "commands: /find <query>, /recent, /help. Any other text is stashed."
         elif first == "/find":

@@ -34,7 +34,7 @@ class TelegramIngest:
     async def poll(self, offset):
         raw = await self._client.get_updates(offset)
         out = []
-        for u in raw:
+        for u in sorted(raw, key=lambda u: u["update_id"]):
             m = parse_update(u)
             if m is not None:
                 out.append(m)
