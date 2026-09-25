@@ -100,14 +100,15 @@ update that is not a private-chat text message from an allowed `sender_id`
 
 ### 5.4 Update acknowledgment (complete rule)
 Updates are handled strictly in `update_id` order. After each update is fully
-handled, the offset in `kv` advances to that `update_id + 1`. "Fully handled"
-means: for a captured note, the raw note is committed; for a command, the reply
-was sent; for a rejected sender, a group/non-text update, or an unsupported
-update, it is simply skipped. The offset is never advanced past an update whose
-handling did not complete, so a crash re-reads from the last fully-handled
-update. Telegram may then re-deliver; capture dedupe by `(telegram, chat_id,
-msg_id)` makes a re-delivered capture idempotent, and a re-sent command reply is
-harmless.
+handled, the offset in `kv` advances to that `update_id + 1`. A capture is
+fully handled once its note is committed; the receipt reply is best-effort,
+and its failure does not block the offset, so a persistently failing send
+can never stall later updates. A rejected sender, a group/non-text update, or
+an unsupported update is simply skipped and the offset still advances. The
+offset is never advanced past an update whose note commit did not complete,
+so a crash re-reads from the last fully-handled update. Telegram may then
+re-deliver; capture dedupe by `(telegram, chat_id, msg_id)` makes a
+re-delivered capture idempotent, and a re-sent command reply is harmless.
 
 ### 5.5 Command dispatch (extensible)
 A registry mapping a command name to a handler. Routing: if the message's first

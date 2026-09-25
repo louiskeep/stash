@@ -151,6 +151,10 @@ class Storage:
         # from under it -- the next row is only claimed once the current
         # one is fully resolved (sent or deferred). Does NOT increment
         # attempts; that happens at send time via record_attempt.
+        # Excludes rows with a NULL chat_id: a reminder captured from a
+        # channel with no delivery target (e.g. the CLI) has nowhere to
+        # send, so it stays pending indefinitely rather than being claimed,
+        # failed to deliver, and churned to 'failed'.
         from datetime import datetime, timedelta
         cutoff = (datetime.fromisoformat(now)
                   - timedelta(seconds=lease_seconds)).isoformat()
@@ -161,6 +165,7 @@ class Storage:
                 "   SELECT id FROM reminders"
                 "   WHERE status='pending' AND fire_at<=? AND attempts<?"
                 "     AND (claimed_at IS NULL OR claimed_at<?)"
+                "     AND chat_id IS NOT NULL"
                 "   ORDER BY fire_at, id LIMIT 1)"
                 " RETURNING *",
                 (now, now, max_attempts, cutoff),

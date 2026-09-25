@@ -32,7 +32,7 @@ upfront before the live scheduler loop.
       `docs/guides/telegram-setup.md`.
 
   **Fixed in M2 redesign (was: must-fix before the live scheduler loop):**
-  - [x] Reminder-scheduler concurrency: updated `claim_due_reminders` to claim and send
+  - [x] Reminder-scheduler concurrency: updated `claim_one_due_reminder` to claim and send
     one reminder at a time, eliminating the batch-claim race where sends can
     outlast their lease and cause false failures.
   - [x] Cap-vs-lease contract: clarified and enforced in the redesigned `run_due`

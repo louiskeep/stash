@@ -24,7 +24,12 @@ def _at(minute):
 def _due(tmp_path, n=1):
     s = Storage.open(str(tmp_path / "t.db"))
     for i in range(n):
-        capture(s, FakeEmbedder(), f"remind me in 30min to task{i}", "cli", _at(0))
+        # source_chat_id="1000" so the resulting reminder has a delivery
+        # target; claim_one_due_reminder skips reminders with chat_id NULL
+        # (see test_null_chat_id_reminder_is_never_claimed_or_delivered
+        # below), and these tests are meant to exercise delivery.
+        capture(s, FakeEmbedder(), f"remind me in 30min to task{i}", "cli", _at(0),
+                source_chat_id="1000")
     return s
 
 
@@ -185,8 +190,8 @@ async def test_stale_tick_full_drain_during_send_does_not_double_send_other_remi
     # batch to recheck.
     s = Storage.open(str(tmp_path / "t.db"))
     e = FakeEmbedder()
-    capture(s, e, "remind me in 30min to stretch", "cli", _at(0))
-    capture(s, e, "remind me in 30min to call mom", "cli", _at(0))
+    capture(s, e, "remind me in 30min to stretch", "cli", _at(0), source_chat_id="1000")
+    capture(s, e, "remind me in 30min to call mom", "cli", _at(0), source_chat_id="1000")
 
     sent_log: list[tuple[str, str, str]] = []  # (tag, chat_id, text)
 
@@ -324,3 +329,32 @@ def test_fail_exhausted_reminders_does_not_clobber_an_owned_final_attempt(tmp_pa
         "SELECT status FROM reminders WHERE id=?", (row["id"],)
     ).fetchone()
     assert final["status"] == "sent"
+
+
+async def test_null_chat_id_reminder_is_never_claimed_or_delivered(tmp_path):
+    # A CLI-created note has no delivery target (source_chat_id is None), so
+    # its reminder's chat_id is NULL. Once the daemon starts running, such a
+    # reminder must stay pending forever rather than being claimed, failing
+    # to send, and churning to 'failed'.
+    s = Storage.open(str(tmp_path / "t.db"))
+    capture(s, FakeEmbedder(), "remind me in 30min to task-no-target", "cli", _at(0))
+    row = s.conn.execute("SELECT chat_id FROM reminders").fetchone()
+    assert row["chat_id"] is None
+
+    assert s.claim_one_due_reminder(_at(31), lease_seconds=120, max_attempts=5) is None
+
+    d = RecordingDelivery()
+    assert await run_due(s, d, _at(31), 120, 5) == 0
+    assert d.sent == []
+    still = s.conn.execute("SELECT status, attempts FROM reminders").fetchone()
+    assert still["status"] == "pending"
+    assert still["attempts"] == 0
+
+
+async def test_reminder_with_chat_id_is_still_claimed_when_due(tmp_path):
+    s = Storage.open(str(tmp_path / "t.db"))
+    capture(s, FakeEmbedder(), "remind me in 30min to task-with-target", "cli", _at(0),
+            source_chat_id="1000")
+    d = RecordingDelivery()
+    assert await run_due(s, d, _at(31), 120, 5) == 1
+    assert len(d.sent) == 1

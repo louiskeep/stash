@@ -44,9 +44,12 @@ STASH_ALLOWED_SENDER_IDS=123456789,987654321,555666777
 
 ## Step 4: Run stash
 
-Start the stash server:
+The daemon and the CLI both load `.env` from the current working directory,
+not from the repo root regardless of where you invoke them from. Run `stash
+serve` from your stash directory so it finds the file you just created:
 
 ```bash
+cd /path/to/your/stash/repo
 python -m stash serve
 ```
 
@@ -64,8 +67,9 @@ After=network.target
 [Service]
 Type=simple
 User=<your_username>
-WorkingDirectory=/path/to/your/stash/repo
+WorkingDirectory=/path/to/stash
 Environment="PATH=/path/to/venv/bin"
+EnvironmentFile=/path/to/stash/.env
 ExecStart=/path/to/venv/bin/python -m stash serve
 Restart=on-failure
 RestartSec=10
@@ -73,6 +77,11 @@ RestartSec=10
 [Install]
 WantedBy=multi-user.target
 ```
+
+`WorkingDirectory` makes the process load `.env` on its own, since that is
+what stash reads on startup. `EnvironmentFile` sets the same values through
+systemd directly, as a second path to the same variables in case `.env`
+is missing or unreadable at that path.
 
 Then enable and start the service:
 

@@ -31,12 +31,14 @@ async def handle_updates(storage, embedder, delivery, ingest, allowed_ids, now_f
     """One poll+dispatch pass.
 
     Polls from the stored `tg_offset`, then for each update in order: handles
-    it if authorized (a private-chat text message from an allowed sender)
-    and sends the reply, or silently skips it otherwise. The offset advances
-    to `update_id + 1` only after an update is fully handled, so a crash
-    mid-handling replays that update on the next poll rather than losing it
-    -- `capture`'s per-(source, chat, msg) unique index makes that replay a
-    no-op instead of a duplicate note.
+    it if authorized (a private-chat text message from an allowed sender),
+    or silently skips it otherwise. A capture is fully handled once its note
+    is committed; the receipt reply is best-effort, so a send failure is
+    logged and swallowed rather than re-raised. The offset always advances
+    to `update_id + 1` after that, whether or not the reply went out, so a
+    persistently failing send can never block later updates -- `capture`'s
+    per-(source, chat, msg) unique index makes any replay from a genuine
+    crash a no-op instead of a duplicate note.
     """
     offset_raw = storage.kv_get("tg_offset")
     offset = int(offset_raw) if offset_raw else None
@@ -44,7 +46,10 @@ async def handle_updates(storage, embedder, delivery, ingest, allowed_ids, now_f
         if msg.text and is_authorized(msg, allowed_ids):
             reply = await handle_message(storage, embedder, msg, now_fn())
             if reply is not None:
-                await delivery.send(msg.chat_id, reply)
+                try:
+                    await delivery.send(msg.chat_id, reply)
+                except Exception as e:
+                    print(f"stash serve: reply send failed: {e!r}", file=sys.stderr)
         # else: unauthorized / group / non-text -> skip, but still advance.
         storage.kv_set("tg_offset", str(msg.update_id + 1))
 
@@ -106,7 +111,7 @@ async def serve(config) -> None:
         storage.kv_set("embed_model", embedder.name)
 
     client = TelegramClient(config.telegram_bot_token)
-    ingest = TelegramIngest(client, config.allowed_sender_ids)
+    ingest = TelegramIngest(client)
     delivery = TelegramDelivery(client)
     sched_lock = asyncio.Lock()
     stop = asyncio.Event()
@@ -128,8 +133,11 @@ async def serve(config) -> None:
 
     async def sched_loop():
         while not stop.is_set():
-            await scheduler_tick(storage, delivery, config.reminder_lease_seconds,
-                                 config.reminder_max_attempts, _utc_now, sched_lock)
+            try:
+                await scheduler_tick(storage, delivery, config.reminder_lease_seconds,
+                                     config.reminder_max_attempts, _utc_now, sched_lock)
+            except Exception as e:
+                print(f"stash serve: scheduler error: {e!r}", file=sys.stderr)
             await asyncio.sleep(config.scheduler_tick_seconds)
 
     try:

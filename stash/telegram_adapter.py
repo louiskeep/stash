@@ -28,9 +28,8 @@ def is_authorized(msg: IncomingMessage, allowed_ids) -> bool:
 
 
 class TelegramIngest:
-    def __init__(self, client, allowed_ids) -> None:
+    def __init__(self, client) -> None:
         self._client = client
-        self._allowed = tuple(allowed_ids)
 
     async def poll(self, offset):
         raw = await self._client.get_updates(offset)

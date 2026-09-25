@@ -1,5 +1,6 @@
 """Configuration loading for stash. No secrets are ever logged."""
 
+import os
 from dataclasses import dataclass
 from typing import Mapping
 
@@ -57,3 +58,29 @@ def load_config(env: Mapping[str, str]) -> Config:
         raise ValueError(f"scheduler_tick_seconds must be >= 1, got {config.scheduler_tick_seconds}")
 
     return config
+
+
+def load_dotenv(path: str = ".env") -> None:
+    """Load KEY=VALUE pairs from a .env file into os.environ.
+
+    A pre-existing environment variable always wins: a key already in
+    os.environ is left untouched. Blank lines and lines starting with '#'
+    are skipped; a value may be wrapped in matching single or double quotes,
+    which are stripped. A line that isn't KEY=VALUE is ignored rather than
+    raising, so a stray or malformed line doesn't block startup.
+    """
+    if not os.path.isfile(path):
+        return
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+                value = value[1:-1]
+            if not key or key in os.environ:
+                continue
+            os.environ[key] = value

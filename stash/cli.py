@@ -11,7 +11,7 @@ from stash.embed import SentenceTransformerEmbedder
 from stash.recall import search
 from stash.reindex import reindex
 from stash.capture import repair
-from stash.config import load_config
+from stash.config import load_config, load_dotenv
 from stash.storage import Storage
 
 
@@ -30,6 +30,8 @@ def main(argv=None, storage=None, embedder=None) -> int:
     sub.add_parser("tags")  # deterministic Topics: tag -> count
     sub.add_parser("serve")  # Telegram poller + reminder scheduler daemon
     args = parser.parse_args(argv)
+
+    load_dotenv(".env")
 
     if args.cmd == "serve":
         from stash.serve import serve

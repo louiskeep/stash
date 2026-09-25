@@ -1,5 +1,7 @@
+import os
+
 import pytest
-from stash.config import load_config
+from stash.config import load_config, load_dotenv
 
 
 def test_defaults_apply_when_env_empty():
@@ -46,3 +48,32 @@ def test_defaults_pass_validation():
     assert c.reminder_max_attempts == 5
     assert c.reminder_lease_seconds == 120
     assert c.scheduler_tick_seconds == 30
+
+
+def test_load_dotenv_sets_new_keys_and_preserves_existing(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("STASH_TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.setenv("STASH_DB_PATH", "already-set.db")
+    (tmp_path / ".env").write_text(
+        "# a comment\n"
+        "\n"
+        "STASH_TELEGRAM_BOT_TOKEN=abc123\n"
+        "STASH_DB_PATH=from-dotenv.db\n"
+        "STASH_ALLOWED_SENDER_IDS='42,43'\n"
+        "this line is malformed\n"
+    )
+    try:
+        load_dotenv(".env")
+        assert os.environ["STASH_TELEGRAM_BOT_TOKEN"] == "abc123"
+        # Pre-set value wins over the .env file.
+        assert os.environ["STASH_DB_PATH"] == "already-set.db"
+        # Surrounding quotes are stripped.
+        assert os.environ["STASH_ALLOWED_SENDER_IDS"] == "42,43"
+    finally:
+        monkeypatch.delenv("STASH_TELEGRAM_BOT_TOKEN", raising=False)
+        monkeypatch.delenv("STASH_ALLOWED_SENDER_IDS", raising=False)
+
+
+def test_load_dotenv_missing_file_is_a_noop(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    load_dotenv(".env")  # no .env present; must not raise

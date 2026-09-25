@@ -35,6 +35,21 @@ async def test_authorized_capture_and_offset_advance(tmp_path):
     assert len(d.sent) == 1                       # receipt sent
 
 
+async def test_failed_reply_send_still_stores_note_and_advances_offset(tmp_path):
+    s = Storage.open(str(tmp_path / "t.db"))
+
+    class AlwaysFailingDelivery:
+        async def send(self, chat_id, text):
+            raise RuntimeError("telegram is down")
+
+    d = AlwaysFailingDelivery()
+    ing = FakeIngest([[_msg(5, "buy milk")]])
+    # Must not raise out of handle_updates: the failed receipt is best-effort.
+    await handle_updates(s, FakeEmbedder(), d, ing, ("42",), _now)
+    assert s.conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 1
+    assert s.kv_get("tg_offset") == "6"  # update_id + 1, offset still advances
+
+
 async def test_group_message_dropped_but_offset_advances(tmp_path):
     s = Storage.open(str(tmp_path / "t.db"))
     d = FakeAsyncDelivery()
