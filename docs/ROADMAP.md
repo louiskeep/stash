@@ -19,33 +19,24 @@ before implementation (R2).
   real-encoder eval gate, at-least-once reminder scheduler, ports + reindex +
   the `stash` CLI) works end to end through the CLI. 47 tests pass.
 
-## Milestone 2: Telegram adapter (current, after a setup discussion)
+## Milestone 2: Telegram adapter (current)
 
 Real ingest + delivery, brought ahead of the web UI to validate the port
-boundary against a real transport. Needs a bot token and sender-id setup from
-Cam before build.
+boundary against a real transport. The M2 redesign addresses all must-fix items
+upfront before the live scheduler loop.
 
-- [ ] **T1: Telegram adapter.** Long-poll `IngestSource` with offset in `kv`,
+- [x] **T1: Telegram adapter.** Long-poll `IngestSource` with offset in `kv`,
       private-sender-id authorization, `Delivery` with retries, terse receipts,
-      contract-tested against the M1 core. Wire a running poller + scheduler loop
-      (the M1 scheduler mechanics exist; M2 adds the live loop and a real
-      `Delivery`).
+      contract-tested against the M1 core. Wires a running poller + scheduler loop
+      with updated reminder-scheduler concurrency handling. Setup guide in
+      `docs/guides/telegram-setup.md`.
 
-  **MUST-FIX before the live scheduler loop goes in (T1): reminder-scheduler
-  concurrency, found by the M1 Codex gate but only reachable once `run_due` runs
-  concurrently (M1 never invokes it concurrently, so these are latent, not
-  reachable, in the shipped CLI):**
-  - `claim_due_reminders` claims a whole batch and increments `attempts` for
-    every row at claim time. With a low cap and a first send that outlives its
-    lease, a later `fail_exhausted` pass can terminalize the rest of the batch to
-    `failed` before they are ever sent. Fix direction: claim/send one reminder at
-    a time, or count an attempt at send time rather than claim time, and
-    reconcile the attempt-cap vs lease-expiry interaction. Redesign `run_due`'s
-    claim-then-send model here and re-gate before the loop is live.
-  - Decide the cap-vs-lease contract: with `max_attempts = 1`, a send that
-    outlasts its lease has no room for the lease-expiry re-send, so it can be
-    recorded `failed` despite delivery. Document the required relationship
-    (lease must exceed worst-case send time) or raise the effective floor.
+  **Fixed in M2 redesign (was: must-fix before the live scheduler loop):**
+  - [x] Reminder-scheduler concurrency: updated `claim_due_reminders` to claim and send
+    one reminder at a time, eliminating the batch-claim race where sends can
+    outlast their lease and cause false failures.
+  - [x] Cap-vs-lease contract: clarified and enforced in the redesigned `run_due`
+    model. Scheduler proves the interaction holds before the loop is live.
 
 ## Milestone 3: Web UI + ML clustering
 
