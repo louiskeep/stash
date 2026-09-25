@@ -11,6 +11,7 @@ fine because the next tick, seconds away, picks up the same due reminders.
 
 import asyncio
 import signal
+import sys
 from datetime import datetime, timezone
 
 from stash.capture import repair
@@ -41,7 +42,7 @@ async def handle_updates(storage, embedder, delivery, ingest, allowed_ids, now_f
     offset = int(offset_raw) if offset_raw else None
     for msg in await ingest.poll(offset):
         if msg.text and is_authorized(msg, allowed_ids):
-            reply = handle_message(storage, embedder, msg, now_fn())
+            reply = await handle_message(storage, embedder, msg, now_fn())
             if reply is not None:
                 await delivery.send(msg.chat_id, reply)
         # else: unauthorized / group / non-text -> skip, but still advance.
@@ -73,7 +74,20 @@ def acquire_single_instance(db_path: str):
     return fh
 
 
+def _validate_config(config) -> None:
+    # Fail fast, before touching the DB or the single-instance lock: a
+    # daemon started without a token or an allow-list would otherwise sit
+    # there polling with every Telegram call erroring, or accepting no one's
+    # messages, with nothing to say why until someone reads the logs.
+    if not config.telegram_bot_token:
+        raise RuntimeError("stash serve: STASH_TELEGRAM_BOT_TOKEN is not set")
+    if not config.allowed_sender_ids:
+        raise RuntimeError(
+            "stash serve: STASH_ALLOWED_SENDER_IDS is empty; refusing to start")
+
+
 async def serve(config) -> None:
+    _validate_config(config)
     lock = acquire_single_instance(config.db_path)
     storage = Storage.open(config.db_path, config.busy_timeout_ms)
     from stash.embed import SentenceTransformerEmbedder
@@ -108,7 +122,8 @@ async def serve(config) -> None:
             try:
                 await handle_updates(storage, embedder, delivery, ingest,
                                      config.allowed_sender_ids, _utc_now)
-            except Exception:
+            except Exception as e:
+                print(f"stash serve: poll error: {e!r}", file=sys.stderr)
                 await asyncio.sleep(1)
 
     async def sched_loop():

@@ -33,7 +33,11 @@ def main(argv=None, storage=None, embedder=None) -> int:
 
     if args.cmd == "serve":
         from stash.serve import serve
-        asyncio.run(serve(load_config(os.environ)))
+        try:
+            asyncio.run(serve(load_config(os.environ)))
+        except RuntimeError as e:
+            print(e, file=sys.stderr)
+            return 1
         return 0
 
     cfg = load_config(os.environ) if storage is None or embedder is None else None

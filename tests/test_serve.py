@@ -2,7 +2,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from stash.serve import acquire_single_instance, handle_updates
+from stash.config import Config
+from stash.serve import acquire_single_instance, handle_updates, serve, _validate_config
 from stash.embed import FakeEmbedder
 from stash.ports import IncomingMessage, FakeAsyncDelivery
 from stash.storage import Storage
@@ -62,3 +63,42 @@ def test_acquire_single_instance_raises_on_second_acquire(tmp_path):
             acquire_single_instance(db_path)
     finally:
         first.close()
+
+
+def _cfg(tmp_path, **overrides):
+    kwargs = dict(
+        db_path=str(tmp_path / "t.db"),
+        embed_model="fake",
+        web_bind="127.0.0.1",
+        web_port=8000,
+        web_password=None,
+        web_session_secret=None,
+        telegram_bot_token="test-token",
+        allowed_sender_ids=("42",),
+        scheduler_tick_seconds=30,
+        reminder_lease_seconds=120,
+        reminder_max_attempts=5,
+        busy_timeout_ms=5000,
+    )
+    kwargs.update(overrides)
+    return Config(**kwargs)
+
+
+def test_validate_config_raises_when_token_missing(tmp_path):
+    with pytest.raises(RuntimeError, match="STASH_TELEGRAM_BOT_TOKEN"):
+        _validate_config(_cfg(tmp_path, telegram_bot_token=None))
+
+
+def test_validate_config_raises_when_allowlist_empty(tmp_path):
+    with pytest.raises(RuntimeError, match="STASH_ALLOWED_SENDER_IDS"):
+        _validate_config(_cfg(tmp_path, allowed_sender_ids=()))
+
+
+async def test_serve_raises_before_touching_db_when_misconfigured(tmp_path):
+    # Validation runs before acquire_single_instance/Storage.open, so a
+    # misconfigured daemon fails fast without creating a lock file or a DB.
+    db_path = tmp_path / "t.db"
+    with pytest.raises(RuntimeError, match="STASH_TELEGRAM_BOT_TOKEN"):
+        await serve(_cfg(tmp_path, telegram_bot_token=None))
+    assert not db_path.exists()
+    assert not (tmp_path / "t.db.serve.lock").exists()

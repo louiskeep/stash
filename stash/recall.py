@@ -25,11 +25,13 @@ def _tags(storage, note_id: int) -> list[str]:
         "SELECT tag FROM note_tags WHERE note_id=?", (note_id,))]
 
 
-def search(storage, embedder, query, limit: int = 10, pool: int = 50):
+def search(storage, embedder, query, limit: int = 10, pool: int = 50,
+           query_embedding: list[float] | None = None):
     if not query.strip():
         return []
     bm25 = storage.search_bm25(query, pool)
-    vec = storage.search_vec(embedder.embed(query), pool)
+    qvec = query_embedding if query_embedding is not None else embedder.embed(query)
+    vec = storage.search_vec(qvec, pool)
     fused = rrf_fuse([bm25, vec])[:limit]
     results = []
     for nid in fused:

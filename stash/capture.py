@@ -19,11 +19,13 @@ def _fire_at(created_at: str, seconds: int) -> str:
     return (base + timedelta(seconds=seconds)).isoformat()
 
 
-def derive(storage, embedder, note_id: int, raw: str, created_at: str) -> str:
+def derive(storage, embedder, note_id: int, raw: str, created_at: str,
+           embedding: list[float] | None = None) -> str:
     parsed = parse(raw)
     storage.set_tags(note_id, parsed.tags)
     storage.set_meta(note_id, parsed.category, parsed.intent)
-    storage.set_embedding(note_id, embedder.embed(raw))
+    vec = embedding if embedding is not None else embedder.embed(raw)
+    storage.set_embedding(note_id, vec)
     if parsed.intent == "reminder" and parsed.remind_in_seconds is not None:
         fire_at = _fire_at(created_at, parsed.remind_in_seconds)
         # Carry the delivery target (channel + chat) from the note, so a later
@@ -50,14 +52,15 @@ def _receipt(parsed_intent: str, raw: str, resolvable: bool) -> str:
 
 
 def capture(storage, embedder, raw, source, created_at,
-            source_chat_id=None, source_msg_id=None) -> CaptureResult:
+            source_chat_id=None, source_msg_id=None,
+            embedding: list[float] | None = None) -> CaptureResult:
     note_id = storage.add_note(
         raw, source, created_at, source_chat_id, source_msg_id)
     if note_id is None:
         return CaptureResult(None, "note", "already stashed.", deduped=True)
     parsed = parse(raw)
     resolvable = parsed.intent == "reminder" and parsed.remind_in_seconds is not None
-    intent = derive(storage, embedder, note_id, raw, created_at)
+    intent = derive(storage, embedder, note_id, raw, created_at, embedding=embedding)
     return CaptureResult(
         note_id, intent, _receipt(parsed.intent, raw, resolvable), deduped=False)
 

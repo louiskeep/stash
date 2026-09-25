@@ -1,5 +1,7 @@
 """Telegram command dispatch. Plain text captures; /commands route. No chat."""
 
+import asyncio
+
 from stash.capture import capture
 from stash.recall import search
 
@@ -17,7 +19,13 @@ def _tiles(results) -> str:
     return "\n\n".join(lines)
 
 
-def handle_message(storage, embedder, msg, now: str) -> str | None:
+async def handle_message(storage, embedder, msg, now: str) -> str | None:
+    # embedder.embed() is a CPU-bound model call; it runs off the event loop
+    # via asyncio.to_thread so it never stalls other coroutines (the
+    # reminder scheduler, other polls) sharing the loop. The capture()/
+    # search() calls that follow do the actual SQLite writes/reads and stay
+    # on the loop thread, since sqlite3 connections are not thread-safe
+    # across threads by default.
     text = msg.text or ""
     if not text.strip():
         return None
@@ -27,13 +35,16 @@ def handle_message(storage, embedder, msg, now: str) -> str | None:
         if first == "/help":
             reply = "commands: /find <query>, /recent, /help. Any other text is stashed."
         elif first == "/find":
-            reply = _tiles(search(storage, embedder, rest, limit=5))
+            qvec = await asyncio.to_thread(embedder.embed, rest)
+            reply = _tiles(search(storage, embedder, rest, limit=5, query_embedding=qvec))
         elif first == "/recent":
             rows = storage.conn.execute(
                 "SELECT raw, created_at FROM notes ORDER BY id DESC LIMIT 5").fetchall()
             reply = "\n\n".join(f"[{r['created_at'][:10]}] {r['raw']}" for r in rows) or "no notes yet."
         return reply[:_MAX]
     # Not a registered command (including an unknown leading '/') -> capture.
+    vec = await asyncio.to_thread(embedder.embed, text)
     result = capture(storage, embedder, text, "telegram", now,
-                     source_chat_id=msg.chat_id, source_msg_id=msg.msg_id)
+                     source_chat_id=msg.chat_id, source_msg_id=msg.msg_id,
+                     embedding=vec)
     return result.receipt[:_MAX]
