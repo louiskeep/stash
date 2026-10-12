@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>stash board</title>
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <link rel="stylesheet" href="/static/board.css">
+</head>
+<body>
+  <div class="bar">
+    <a class="brand" href="/">stash<span class="dot">.</span></a>
+    <nav class="nav">
+      <a href="/" class="on">Board</a>
+      <a href="/search">Search</a>
+      <a href="/timeline">Timeline</a>
+      <a href="/topics">Topics</a>
+      <a href="/reminders">Reminders</a>
+    </nav>
+    <div class="seg" id="order">
+      <button type="button" data-order="newest" class="on">Newest</button>
+      <button type="button" data-order="oldest">Oldest</button>
+    </div>
+    <div class="chips" id="chips"></div>
+    <span class="spacer"></span>
+    <button class="ghost" id="timersBtn" type="button">Active timers</button>
+    <form class="logout" method="post" action="/logout" style="margin:0">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="ghost" type="submit">Sign out</button>
+    </form>
+  </div>
+
+  <div class="board-wrap" id="wrap">
+    <div class="grid" id="grid"></div>
+    <div class="hint" id="hint" hidden>Nothing here yet. Double-click the board or tap + to stash a thought.</div>
+    <button class="add" id="addBtn" type="button" aria-label="Add a note">+</button>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/muuri/0.9.5/muuri.min.js"></script>
+  <script src="/static/board.js" defer></script>
+  <script src="/static/board-piles.js" defer></script>
+</body>
+</html>
