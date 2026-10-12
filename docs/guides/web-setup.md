@@ -67,7 +67,12 @@ Binding to `0.0.0.0` makes the UI reachable from your network, so your phone can
 submit notes directly. The bind address alone does **not** make this safe:
 
 - Put it behind TLS (a reverse proxy such as Caddy or nginx with a certificate).
-  The login cookie is only marked `Secure` over HTTPS.
+  The login cookie is only marked `Secure` over HTTPS. When TLS is terminated at
+  a proxy, stash sees plain HTTP and will not set `Secure` unless it is told to
+  trust the proxy's `X-Forwarded-Proto`. Run the app so uvicorn honors forwarded
+  headers only from your proxy's address, e.g. with
+  `--forwarded-allow-ips=127.0.0.1` (never trust forwarded headers from an open
+  bind). Until then, assume the cookie is not `Secure` behind a proxy.
 - Keep `STASH_WEB_SESSION_SECRET` set and secret.
 - The cookie is already `HttpOnly` and `SameSite=Lax`, and every form submission
   carries a CSRF token.

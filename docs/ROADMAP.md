@@ -26,13 +26,17 @@ before implementation (R2).
 
 ## Milestone 3: Web UI + ML clustering (current)
 
-- [ ] **W1: Web UI.** Jinja + htmx pages (Search, Timeline, Topics, Note detail,
-      Reminders), password/session guard with secure cookies + CSRF, localhost
-      bind by default.
+- [x] **W1: Web UI.** Shipped 2026-10-12 on `feat/m3-w1-web-ui` (see
+      `docs/RECENTLY-SHIPPED.md`). Starlette + Jinja + htmx pages (Search,
+      Timeline, Topics, Note detail, Reminders) in the `stash serve` loop,
+      single-password signed sessions + CSRF, localhost bind by default. Gate:
+      0 Critical; two HIGH thread-affinity findings root-fixed. The pytest suite
+      should be run with sqlite-vec/encoder installed before merge (not available
+      in the build environment).
 - [ ] **W2: Clustering.** HDBSCAN auto-Topics with TF-IDF/tag labels, outliers
       allowed, once a real corpus justifies it.
 - [ ] **W3: Packaging.** `[project.scripts]` entry so `uv run stash` works
-      (M1 runs as `python -m stash`), Dockerfile, online-backup guidance, run
+      (M1/W1 run as `python -m stash`), Dockerfile, online-backup guidance, run
       docs.
 
 ## Follow-ups carried from review (next slice)
