@@ -7,14 +7,14 @@ routes not yet imagined here too; this test pins the current table explicitly.
 
 import pytest
 
-GET_ROUTES = [
-    "/", "/board/notes", "/search", "/search/results?q=milk", "/timeline",
-    "/topics", "/topics/tag/groceries", "/topics/category/work",
-    "/topics/cluster/1", "/note/1", "/reminders",
-]
-POST_ROUTES = ["/add", "/logout", "/board/positions", "/board/piles",
+GET_ROUTES = ["/", "/board/notes", "/board/search?q=milk"]
+POST_ROUTES = ["/logout", "/board/positions", "/board/piles",
                "/board/add", "/board/delete"]
-OPEN_ROUTES = ["/healthz", "/login", "/static/app.css"]
+OPEN_ROUTES = ["/healthz", "/login", "/static/board.css"]
+# W5 removed these pages entirely; authed, they 404 (gone, not merely guarded).
+REMOVED_ROUTES = ["/search", "/search/results", "/timeline", "/topics",
+                  "/topics/tag/x", "/topics/category/w", "/topics/cluster/1",
+                  "/note/1", "/reminders"]
 
 
 @pytest.mark.parametrize("path", GET_ROUTES)
@@ -37,3 +37,10 @@ async def test_unauth_post_has_no_effect(client, storage, seed, path):
 async def test_open_routes_reachable_without_auth(client, path):
     r = await client.get(path)
     assert r.status_code == 200
+
+
+@pytest.mark.parametrize("path", REMOVED_ROUTES)
+async def test_removed_pages_404_when_authed(client, path):
+    from tests.conftest import login
+    await login(client)
+    assert (await client.get(path)).status_code == 404

@@ -183,130 +183,9 @@ class AuthGuard:
         await self.app(scope, receive, send)
 
 
-# --- page routes -----------------------------------------------------------
-
-_RESULTS_LIMIT = 20
-_TIMELINE_PAGE = 50
-_RELATED_LIMIT = 5
-_REMINDERS_LIMIT = 200
-_TOPIC_LIMIT = 200
-
-
-async def _do_search(request: Request, q: str):
-    if not q.strip():
-        return []
-    storage = request.app.state.storage
-    embedder = request.app.state.embedder
-    # Offload the CPU-bound embed off the event loop, like commands.py. The
-    # SQLite work in recall.search stays on the loop thread.
-    qvec = await asyncio.to_thread(embedder.embed, q)
-    return search(storage, embedder, q, limit=_RESULTS_LIMIT, query_embedding=qvec)
-
-
-async def search_page(request: Request) -> Response:
-    q = request.query_params.get("q", "")
-    results = await _do_search(request, q)
-    return _render(request, "search.html",
-                   {"active": "search", "q": q, "results": results})
-
-
-async def search_fragment(request: Request) -> Response:
-    q = request.query_params.get("q", "")
-    results = await _do_search(request, q)
-    # Just the results list, for htmx to swap into #results.
-    return _render(request, "_tiles.html", {"q": q, "results": results})
-
-
-async def add_note(request: Request) -> Response:
-    _require_csrf(request, await _form_field(request, "csrf_token"))
-    text = await _form_field(request, "text")
-    storage = request.app.state.storage
-    embedder = request.app.state.embedder
-    receipt = None
-    if text.strip():
-        from datetime import datetime, timezone
-        now = datetime.now(timezone.utc).isoformat()
-        # capture_async writes the note and runs derive() on THIS (loop) thread,
-        # offloading only the CPU-bound embed via asyncio.to_thread. Wrapping the
-        # whole of sync capture() in to_thread instead would run SQLite on a
-        # worker thread, which the connection (check_same_thread) forbids: the
-        # DB must be touched only on the loop thread. This matches commands.py.
-        result = await capture_async(storage, embedder, text, "web", now)
-        receipt = result.receipt
-    return _render(request, "search.html",
-                   {"active": "search", "q": "", "results": [], "receipt": receipt})
-
-
-async def timeline_page(request: Request) -> Response:
-    storage = request.app.state.storage
-    before_id = request.query_params.get("before_id")
-    before = int(before_id) if before_id and before_id.isdigit() else None
-    # Fetch one extra to know whether an older page exists.
-    rows = storage.recent_notes(_TIMELINE_PAGE + 1, before_id=before)
-    next_before_id = None
-    if len(rows) > _TIMELINE_PAGE:
-        next_before_id = rows[_TIMELINE_PAGE - 1]["id"]
-        rows = rows[:_TIMELINE_PAGE]
-    return _render(request, "timeline.html",
-                   {"active": "timeline", "notes": rows,
-                    "next_before_id": next_before_id})
-
-
-async def topics_page(request: Request) -> Response:
-    storage = request.app.state.storage
-    return _render(request, "topics.html",
-                   {"active": "topics",
-                    "clusters": storage.cluster_topics(),
-                    "tags": storage.tag_counts(),
-                    "categories": storage.category_counts()})
-
-
-async def topic_cluster(request: Request) -> Response:
-    storage = request.app.state.storage
-    cluster_id = request.path_params["cluster_id"]
-    label = storage.cluster_label(cluster_id)
-    if label is None:
-        raise HTTPException(status_code=404, detail="no such topic")
-    notes = storage.notes_by_cluster(cluster_id, _TOPIC_LIMIT)
-    return _render(request, "topic_list.html",
-                   {"active": "topics", "label": label, "notes": notes})
-
-
-async def topic_tag(request: Request) -> Response:
-    storage = request.app.state.storage
-    tag = request.path_params["tag"]
-    notes = storage.notes_by_tag(tag, _TOPIC_LIMIT)
-    return _render(request, "topic_list.html",
-                   {"active": "topics", "label": "#" + tag, "notes": notes})
-
-
-async def topic_category(request: Request) -> Response:
-    storage = request.app.state.storage
-    cat = request.path_params["cat"]
-    notes = storage.notes_by_category(cat, _TOPIC_LIMIT)
-    return _render(request, "topic_list.html",
-                   {"active": "topics", "label": "@" + cat, "notes": notes})
-
-
-async def note_detail(request: Request) -> Response:
-    storage = request.app.state.storage
-    note_id = request.path_params["note_id"]
-    detail = storage.note_detail(note_id)
-    if detail is None:
-        raise HTTPException(status_code=404, detail="no such note")
-    related = storage.related_by_embedding(note_id, _RELATED_LIMIT)
-    return _render(request, "note.html",
-                   {"active": "", "note": detail, "related": related})
-
-
-async def reminders_page(request: Request) -> Response:
-    storage = request.app.state.storage
-    return _render(request, "reminders.html",
-                   {"active": "reminders",
-                    "reminders": storage.list_reminders(_REMINDERS_LIMIT)})
-
-
 # --- board -----------------------------------------------------------------
+
+_SEARCH_LIMIT = 200  # ranked ids the board intersects with its other filters
 
 async def board_page(request: Request) -> Response:
     # The canvas page. It boots by fetching /board/notes; the server renders only
@@ -319,6 +198,22 @@ async def board_notes(request: Request) -> Response:
     storage = request.app.state.storage
     return JSONResponse({"notes": storage.board_notes(),
                          "piles": [dict(p) for p in storage.board_piles()]})
+
+
+async def board_search(request: Request) -> Response:
+    # Hybrid recall (BM25 + vector) for the top-bar search. Returns ranked note
+    # ids the board intersects with its tag/category/time filters. An empty query
+    # means "search inactive"; the client treats a null/absent id list as "show
+    # all", so there is no result list here, only ids. The CPU-bound embed is
+    # offloaded off the loop; recall.search's own hardening handles odd input.
+    q = request.query_params.get("q", "")
+    if not q.strip():
+        return JSONResponse({"q": q, "ids": []})
+    storage = request.app.state.storage
+    embedder = request.app.state.embedder
+    qvec = await asyncio.to_thread(embedder.embed, q)
+    results = search(storage, embedder, q, limit=_SEARCH_LIMIT, query_embedding=qvec)
+    return JSONResponse({"q": q, "ids": [r.note_id for r in results]})
 
 
 async def _json_body(request: Request):
@@ -404,24 +299,15 @@ def build_app(storage, embedder, config) -> Starlette:
         Route("/login", login_get, methods=["GET"]),
         Route("/login", login_post, methods=["POST"]),
         Route("/logout", logout_post, methods=["POST"]),
-        # The board is the home surface (W4). The text Search page moves to
-        # /search; its live-results fragment moves to /search/results.
+        # The board is the only screen (W5). Search, topic and time are controls
+        # on it; the former Search/Timeline/Topics/Reminders pages are gone.
         Route("/", board_page, methods=["GET"]),
         Route("/board/notes", board_notes, methods=["GET"]),
+        Route("/board/search", board_search, methods=["GET"]),
         Route("/board/positions", board_positions, methods=["POST"]),
         Route("/board/piles", board_piles, methods=["POST"]),
         Route("/board/add", board_add, methods=["POST"]),
         Route("/board/delete", board_delete, methods=["POST"]),
-        Route("/search", search_page, methods=["GET"]),
-        Route("/search/results", search_fragment, methods=["GET"]),
-        Route("/add", add_note, methods=["POST"]),
-        Route("/timeline", timeline_page, methods=["GET"]),
-        Route("/topics", topics_page, methods=["GET"]),
-        Route("/topics/tag/{tag}", topic_tag, methods=["GET"]),
-        Route("/topics/category/{cat}", topic_category, methods=["GET"]),
-        Route("/topics/cluster/{cluster_id:int}", topic_cluster, methods=["GET"]),
-        Route("/note/{note_id:int}", note_detail, methods=["GET"]),
-        Route("/reminders", reminders_page, methods=["GET"]),
         Mount("/static", StaticFiles(directory=_STATIC_DIR), name="static"),
     ]
     app = Starlette(routes=routes)

@@ -1,15 +1,53 @@
-{% extends "base.html" %}
-{% block title %}Sign in · stash{% endblock %}
-{% block content %}
-<div class="signin">
-  <h1 class="wordmark big">stash</h1>
-  <p class="muted">Enter your password to open your notes.</p>
-  {% if error %}<p class="error">{{ error }}</p>{% endif %}
-  <form method="post" action="/login" class="stack">
-    <input type="hidden" name="csrf_token" value="{{ login_csrf }}">
-    <input type="password" name="password" autofocus autocomplete="current-password"
-           aria-label="Password" placeholder="Password">
-    <button type="submit">Open</button>
-  </form>
-</div>
-{% endblock %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in to stash</title>
+  <style>
+    :root {
+      --paper: #fbfbfa; --ink: #1a1a1a; --ink-soft: #5c5c58; --line: #e1e0db;
+      --accent: #3b4cca; --bad: #a3303a;
+      --ui: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --paper: #141412; --ink: #e9e8e4; --ink-soft: #a0a09a; --line: #30302b;
+        --accent: #9aa6ff; --bad: #e2808a; color-scheme: dark;
+      }
+    }
+    :root[data-theme="dark"] {
+      --paper: #141412; --ink: #e9e8e4; --ink-soft: #a0a09a; --line: #30302b;
+      --accent: #9aa6ff; --bad: #e2808a; color-scheme: dark;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: var(--paper); color: var(--ink);
+      font-family: var(--ui); display: grid; place-items: center; padding: 1rem; }
+    .signin { width: 100%; max-width: 20rem; }
+    .brand { font-size: 2rem; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 0.25rem; }
+    .brand .dot { color: var(--accent); }
+    .muted { color: var(--ink-soft); margin: 0 0 1.25rem; }
+    .error { color: var(--bad); }
+    form { display: flex; flex-direction: column; gap: 0.6rem; }
+    input[type=password] { width: 100%; padding: 0.55rem 0.7rem; border: 1px solid var(--line);
+      border-radius: 6px; background: var(--paper); color: var(--ink); font: inherit; }
+    input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    button { padding: 0.55rem 0.9rem; border: 1px solid var(--accent); border-radius: 6px;
+      background: var(--accent); color: #fff; font: inherit; cursor: pointer; }
+    button:hover { filter: brightness(1.05); }
+  </style>
+</head>
+<body>
+  <div class="signin">
+    <h1 class="brand">stash<span class="dot">.</span></h1>
+    <p class="muted">Enter your password to open your notes.</p>
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+    <form method="post" action="/login">
+      <input type="hidden" name="csrf_token" value="{{ login_csrf }}">
+      <input type="password" name="password" autofocus autocomplete="current-password"
+             aria-label="Password" placeholder="Password">
+      <button type="submit">Open</button>
+    </form>
+  </div>
+</body>
+</html>
