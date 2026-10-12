@@ -14,6 +14,10 @@ dependencies = [
     # can pull it in transitively, but we import it directly, so it is a direct
     # dependency and must be declared rather than relied on transitively.
     "itsdangerous>=2.0",
+    # Starlette needs python-multipart to parse form POST bodies, which every
+    # form route uses via request.form() (login, logout, add-note). Starlette
+    # does not depend on it by default, so declare it.
+    "python-multipart>=0.0.7",
 ]
 
 [project.optional-dependencies]
