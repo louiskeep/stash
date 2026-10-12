@@ -11,16 +11,30 @@ A second brain that isn't a chatbot. Text a thought, get it back later.
   rewrites or adds content. The raw note is sacred. LLM-API is an opt-in paid tier only.
 
 ## v0 scope (recall-only)
-Telegram in -> deterministic parse -> local embedding -> Postgres (pgvector + tsvector)
--> hybrid retrieval (RRF) -> candidate tiles with sources. Plus graveyard import and a
-precision@3 eval. Quantitative path, LLM router, and reminders are deferred.
+Telegram or web in -> deterministic parse -> local embedding -> SQLite
+(sqlite-vec + FTS5) -> hybrid retrieval (RRF) -> candidate tiles with sources.
+Plus reminders and a hit-rate@3 recall eval. ML clustering, the quantitative
+path, and an LLM router are deferred.
 
 ## Architecture
 ```
-TELEGRAM -> INGEST (raw immutable) -> PARSE (code) -> EMBED (local) -> POSTGRES
-                                                                          ^
-Recall: ?? -> parse + expand -> tsvector + pgvector -> RRF -> top-k tiles + source
+TELEGRAM / WEB -> INGEST (raw immutable) -> PARSE (code) -> EMBED (local) -> SQLITE
+                                                                               ^
+Recall: query -> parse + expand -> FTS5 + sqlite-vec -> RRF -> top-k tiles + source
 ```
+Everything is one process over one SQLite file: the Telegram poller, the reminder
+scheduler, and the web server share it.
+
+## Run
+```
+uv sync
+python -m stash add "a thought to stash"     # capture from the CLI
+python -m stash search "half-remembered"     # recall from the CLI
+python -m stash serve                         # Telegram poller + reminders + web UI
+```
+The web UI turns on once `STASH_WEB_PASSWORD` and `STASH_WEB_SESSION_SECRET` are
+set; open http://127.0.0.1:8000. See `docs/guides/web-setup.md` and
+`docs/guides/telegram-setup.md`.
 
 ## Dev
 ```
