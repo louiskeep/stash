@@ -87,5 +87,14 @@ Back up the SQLite database with a consistent online backup while the process is
 running, not a raw file copy of a live WAL database:
 
 ```bash
-sqlite3 stash.db "VACUUM INTO 'stash-backup.db'"
+uv run stash backup stash-backup.db
 ```
+
+This runs `VACUUM INTO` under the hood: a coherent, single-file snapshot that is
+safe to take while `stash serve` is running, and refuses to overwrite an existing
+file unless you pass `--force`. (The older `sqlite3 stash.db "VACUUM INTO ..."`
+does the same thing by hand.)
+
+## Running in a container
+
+For a one-container install, see `docs/guides/docker.md`.
