@@ -24,7 +24,11 @@ before implementation (R2).
   with the reminder scheduler redesigned async (one-at-a-time claim, attempt-at-
   send, backoff). 100 tests pass. dennis GO + Codex GO.
 
-## Milestone 3: Web UI + ML clustering (current)
+## Milestone 3: Web UI + ML clustering (COMPLETE - v1 MVP)
+
+All three slices shipped 2026-10-12. With W1, W2, and W3 merged, the v1 MVP is
+done: capture and recall through CLI, Telegram, and a local web UI; reminders;
+automatic topic discovery; and a one-command / one-container install with backup.
 
 - [x] **W1: Web UI.** Shipped 2026-10-12 on `feat/m3-w1-web-ui` (see
       `docs/RECENTLY-SHIPPED.md`). Starlette + Jinja + htmx pages (Search,
@@ -33,8 +37,12 @@ before implementation (R2).
       0 Critical; two HIGH thread-affinity findings root-fixed. The pytest suite
       should be run with sqlite-vec/encoder installed before merge (not available
       in the build environment).
-- [ ] **W2: Clustering.** HDBSCAN auto-Topics with TF-IDF/tag labels, outliers
-      allowed, once a real corpus justifies it.
+- [x] **W2: Clustering.** Shipped 2026-10-12 on `feat/m3-w2-clustering` (see
+      `docs/RECENTLY-SHIPPED.md`). `recluster()` runs HDBSCAN over note
+      embeddings, TF-IDF/tag labels, outliers allowed; opt-in `cluster` extra,
+      manual `stash recluster`, Topics "Discovered topics" section. Gate: 0
+      Critical/High (reviewer ran the real HDBSCAN path). Run the pytest suite
+      with sqlite-vec + the cluster extra before merge.
 - [x] **W3: Packaging.** Shipped 2026-10-12 on `feat/m3-w3-packaging` (see
       `docs/RECENTLY-SHIPPED.md`). `uv run stash` console-script entry point, a
       `stash backup` VACUUM INTO online backup, a Dockerfile + guide, and

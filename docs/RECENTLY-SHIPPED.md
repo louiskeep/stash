@@ -3,6 +3,52 @@
 Dated log of merged/merge-ready slices with gate evidence. The roadmap points
 here instead of restating history.
 
+## 2026-10-12: Milestone 3 / W2: Clustering (completes the MVP)
+
+Branch `feat/m3-w2-clustering` (off `feat/m3-w3-packaging`). Topic discovery:
+`recluster()` runs HDBSCAN over the note embeddings, groups semantically similar
+notes, labels each from its own TF-IDF terms or a shared tag, and leaves notes
+that do not fit a dense group as outliers. The Topics page shows a "Discovered
+topics" section when clusters exist. With W2 merged, all three Milestone 3 slices
+are done and the v1 MVP is complete.
+
+What shipped: an opt-in `cluster` extra (scikit-learn + numpy) so the base
+install stays light while the feature is fully built; `stash/cluster.py` with the
+import probe, `recluster()`, and deterministic non-generative labelling;
+derived-only storage writes (`replace_clusters` clears + inserts + assigns in one
+transaction, touching only `clusters` and `note_meta.cluster_id`); a `stash
+recluster` CLI with summary / small-corpus skip / install-hint paths; reindex
+clearing stale clusters; and the Topics "Discovered topics" section +
+`/topics/cluster/{id}` drill-down. Docs: a clustering guide plus README and
+web-setup links.
+
+Gate evidence:
+- 5 tasks, plan on disk at
+  `docs/superpowers/plans/2026-10-12-stash-m3-w2-clustering.md`, acceptance tests
+  per task before implementation (R2).
+- Independent cold review at the gate: GO, 0 Critical / 0 High. The reviewer ran
+  the real HDBSCAN path (scikit-learn was available in the review environment)
+  and confirmed derived-only isolation, transactional atomicity, idempotence of
+  the grouping and the cluster ids, outlier handling (label -1 -> cluster_id
+  NULL), the optional-dependency boundary, deterministic non-generative labels,
+  and autoescaped output. Two LOW items fixed (a wrong docstring; a clearer
+  zero-topics CLI message); `requires-python` kept at >=3.10 by choice.
+- Spec section 10 clustering criteria met: stability on unchanged input,
+  non-empty labels, outliers allowed.
+
+Verification note: unlike the earlier slices, scikit-learn WAS present in the
+build/review environment, so the real `recluster()` algorithm path was exercised
+in-session (two-theme-plus-outlier corpora: correct clusters, labels, outliers,
+idempotence, small-corpus skip, derived-only). sqlite-vec was still absent, so
+the storage reads of `vec_notes` (via a plain-sqlite fake storage in tests) and
+the full pytest suite should be run with sqlite-vec + the `cluster` extra
+installed before merge.
+
+Not in W2 (by design): auto-reclustering in the serve loop (manual `stash
+recluster` only); per-cluster rename/merge; CLI overrides for the clustering
+thresholds (possible follow-up); any change to capture, recall, reminders, or
+Telegram.
+
 ## 2026-10-12: Milestone 3 / W3: Packaging
 
 Branch `feat/m3-w3-packaging` (off `feat/m3-w1-web-ui`). Makes stash installable
