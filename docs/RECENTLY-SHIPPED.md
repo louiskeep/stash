@@ -3,6 +3,49 @@
 Dated log of merged/merge-ready slices with gate evidence. The roadmap points
 here instead of restating history.
 
+## 2026-10-12: W5: Single Screen
+
+Branch `feat/w5-single-screen` (off `feat/w4-board`). The whole web UI is now one
+screen, the board. The separate Search, Timeline, Topics, and Reminders pages are
+removed; each is a control on the board: search in the top bar, a Topic dropdown
+(categories and tags), an Order select with a From/To datetime range, and active
+reminders as a left rail with live countdowns you click to jump to a note. All
+filters stack (AND): search text, the selected topic, and the time range narrow
+the same board together.
+
+What shipped: removal of the page routes, handlers, and templates (and base.html,
+app.css, htmx.min.js, now unused), with login.html made standalone; a new
+GET /board/search?q= over hybrid recall (embed offloaded, returns ranked ids the
+board intersects with its filters); board.js filter state and AND-logic, the
+Topic dropdown, the From/To time filter, and the reminders rail with
+click-to-focus; board.css control and rail styles.
+
+Gate evidence:
+- 5 tasks, plan on disk at
+  `docs/superpowers/plans/2026-10-12-stash-w5-single-screen.md`, acceptance tests
+  per task before implementation (R2).
+- Independent cold review: 0 Critical (no auth bypass, no XSS, no content leak;
+  the removed routes verifiably 404 when authed, not merely guarded; search
+  returns only ids; rail and dropdown use textContent). Two HIGH fixed, both
+  stale tests left red by the page removal: test_web_csrf.py posted to the gone
+  /add route (repointed to /board/add) and test_packaging.py asserted deleted
+  assets (repointed to the surviving ones). One MEDIUM fixed: the Topic dropdown
+  could desync from the filter state after a delete (buildTopics now clears
+  state.tag/cat when the selected option disappears). Two LOW cleanups.
+- The board reads the same storage and recall the old pages did, so the controls
+  cannot drift from the real notes.
+
+Verification note: no sqlite-vec or browser in the build environment, so search
+(over vec_notes) and the live filter/rail interactions are user-verified in a
+browser; the route removal, search endpoint auth/shape, filter AND-logic,
+packaging-asset, and login-standalone changes were verified in-session via
+ASGITransport and fake storage, and both board JS files pass node --check. Before
+merge, run the suite with sqlite-vec installed.
+
+Not in W5 (by design): snooze/cancel of reminders from the rail (display +
+click-to-focus only); a separate note-detail page (the card holds the full note);
+discovered topics are not yet a dropdown entry of their own (a small follow-up).
+
 ## 2026-10-12: W4: The Board (home surface)
 
 Branch `feat/w4-board` (off `feat/m3-w2-clustering`). The web UI's home is now a
