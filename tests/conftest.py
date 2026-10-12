@@ -2,13 +2,21 @@
 
 These build the app over a real in-memory Storage (so the browse/search queries
 run against actual SQLite + sqlite-vec) with the deterministic FakeEmbedder, and
-drive it through Starlette's in-process transport. No socket, no model load.
+drive it with httpx's in-process ASGI transport. No socket, no model load.
+
+The client is an async httpx client over ASGITransport, so request handlers run
+on the same event-loop thread as the test and the Storage connection. That
+matches production, where the serve loop thread owns the connection: it keeps
+SQLite's single-thread affinity intact. (Starlette's sync TestClient would run
+handlers on a separate portal thread and trip check_same_thread.)
 """
 
 import re
 
+import httpx
 import pytest
-from starlette.testclient import TestClient
+import pytest_asyncio
+from httpx import ASGITransport
 
 from stash.capture import capture
 from stash.config import load_config
@@ -42,9 +50,14 @@ def app(storage, embedder, config):
     return build_app(storage, embedder, config)
 
 
-@pytest.fixture
-def client(app):
-    return TestClient(app, follow_redirects=False)
+@pytest_asyncio.fixture
+async def client(app):
+    transport = ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://stash.test",
+        follow_redirects=False,
+    ) as c:
+        yield c
 
 
 @pytest.fixture
@@ -62,15 +75,15 @@ def seed(storage, embedder):
     return add
 
 
-def _login_csrf(client):
-    page = client.get("/login").text
+async def _login_csrf(client):
+    page = (await client.get("/login")).text
     return re.search(r'name="csrf_token" value="([^"]+)"', page).group(1)
 
 
-def login(client):
+async def login(client):
     """Log the client in; return the session CSRF token from the home page."""
-    token = _login_csrf(client)
-    client.post("/login", data={"password": "hunter2", "csrf_token": token})
-    home = client.get("/").text
+    token = await _login_csrf(client)
+    await client.post("/login", data={"password": "hunter2", "csrf_token": token})
+    home = (await client.get("/")).text
     m = re.search(r'name="csrf-token" content="([^"]+)"', home)
     return m.group(1) if m else None

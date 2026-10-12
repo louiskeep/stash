@@ -1,10 +1,11 @@
 """Task 0 smoke: the web app builds and answers /healthz in-process.
 
-Uses Starlette's in-process test transport (no socket, no network). The fake
+Uses httpx's in-process ASGI transport (no socket, no network). The fake
 embedder and an in-memory storage keep this fast and model-free.
 """
 
-from starlette.testclient import TestClient
+import httpx
+from httpx import ASGITransport
 
 from stash.config import load_config
 from stash.embed import FakeEmbedder
@@ -22,8 +23,9 @@ def _app():
     return build_app(storage, embedder, config)
 
 
-def test_healthz_ok():
-    client = TestClient(_app())
-    resp = client.get("/healthz")
+async def test_healthz_ok():
+    transport = ASGITransport(app=_app())
+    async with httpx.AsyncClient(transport=transport, base_url="http://stash.test") as c:
+        resp = await c.get("/healthz")
     assert resp.status_code == 200
     assert resp.text == "ok"

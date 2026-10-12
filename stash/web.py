@@ -26,7 +26,7 @@ from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
 
 from stash import websession as ws
-from stash.capture import capture
+from stash.capture import capture_async
 from stash.recall import search
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -225,9 +225,12 @@ async def add_note(request: Request) -> Response:
     if text.strip():
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc).isoformat()
-        # capture() runs the embed inline; offload it so the loop is not stalled.
-        result = await asyncio.to_thread(
-            capture, storage, embedder, text, "web", now)
+        # capture_async writes the note and runs derive() on THIS (loop) thread,
+        # offloading only the CPU-bound embed via asyncio.to_thread. Wrapping the
+        # whole of sync capture() in to_thread instead would run SQLite on a
+        # worker thread, which the connection (check_same_thread) forbids: the
+        # DB must be touched only on the loop thread. This matches commands.py.
+        result = await capture_async(storage, embedder, text, "web", now)
         receipt = result.receipt
     return _render(request, "search.html",
                    {"active": "search", "q": "", "results": [], "receipt": receipt})

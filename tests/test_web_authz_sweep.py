@@ -16,24 +16,22 @@ OPEN_ROUTES = ["/healthz", "/login", "/static/app.css"]
 
 
 @pytest.mark.parametrize("path", GET_ROUTES)
-def test_unauth_get_redirects_and_leaks_nothing(client, seed, path):
-    r = client.get(path)
+async def test_unauth_get_redirects_and_leaks_nothing(client, seed, path):
+    r = await client.get(path)
     assert r.status_code == 303
     assert r.headers["location"] == "/login"
-    # No seeded note text in the redirect body.
     assert "buy milk" not in r.text
 
 
 @pytest.mark.parametrize("path", POST_ROUTES)
-def test_unauth_post_has_no_effect(client, storage, seed, path):
+async def test_unauth_post_has_no_effect(client, storage, seed, path):
     before = len(storage.recent_notes(1000))
-    r = client.post(path, data={"text": "sneaky", "csrf_token": "x"})
-    # Either redirected to login (guard) or 403 (csrf); never a 200 effect.
+    r = await client.post(path, data={"text": "sneaky", "csrf_token": "x"})
     assert r.status_code in (303, 403)
     assert len(storage.recent_notes(1000)) == before
 
 
 @pytest.mark.parametrize("path", OPEN_ROUTES)
-def test_open_routes_reachable_without_auth(client, path):
-    r = client.get(path)
+async def test_open_routes_reachable_without_auth(client, path):
+    r = await client.get(path)
     assert r.status_code == 200
