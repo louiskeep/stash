@@ -323,6 +323,21 @@ async def board_boards_delete(request: Request) -> Response:
     return JSONResponse({"ok": True, "deleted": deleted})
 
 
+async def board_settings_get(request: Request) -> Response:
+    return JSONResponse(request.app.state.storage.get_settings())
+
+
+async def board_settings_save(request: Request) -> Response:
+    _require_csrf(request, "")
+    body = await _json_body(request)
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="invalid body")
+    # save_settings validates and normalizes; it returns the cleaned settings so
+    # the client reflects exactly what was stored (bad colors dropped, etc.).
+    clean = request.app.state.storage.save_settings(body)
+    return JSONResponse(clean)
+
+
 # --- factory ---------------------------------------------------------------
 
 def _validate_web_config(config) -> None:
@@ -358,6 +373,8 @@ def build_app(storage, embedder, config) -> Starlette:
         Route("/board/boards", board_boards_list, methods=["GET"]),
         Route("/board/boards", board_boards_save, methods=["POST"]),
         Route("/board/boards/delete", board_boards_delete, methods=["POST"]),
+        Route("/board/settings", board_settings_get, methods=["GET"]),
+        Route("/board/settings", board_settings_save, methods=["POST"]),
         Mount("/static", StaticFiles(directory=_STATIC_DIR), name="static"),
     ]
     app = Starlette(routes=routes)

@@ -4,6 +4,7 @@ Transactions are short and never span a network call. FTS and vec tables are
 kept in sync here on every note write.
 """
 
+import re
 import sqlite3
 import struct
 
@@ -17,6 +18,30 @@ def _pack_f32(vector: list[float]) -> bytes:
 def _unpack_f32(blob: bytes) -> list[float]:
     n = len(blob) // 4
     return list(struct.unpack(f"{n}f", blob))
+
+
+_HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+_THEMES = ("system", "light", "dark")
+_SORTS = ("newest", "oldest")
+
+
+def _normalize_settings(data: dict) -> dict:
+    """Validate and normalize a settings document: drop anything that is not a
+    known theme/sort or a valid #rrggbb color, so only clean values are stored
+    or served and no unchecked value can reach the page."""
+    theme = data.get("theme")
+    theme = theme if theme in _THEMES else "system"
+    sort = data.get("defaultSort")
+    sort = sort if sort in _SORTS else "newest"
+    colors_in = data.get("colors")
+    colors = {}
+    if isinstance(colors_in, dict):
+        for key, val in colors_in.items():
+            # key is "tag:<name>" or "cat:<name>"; value a #rrggbb hex.
+            if (isinstance(key, str) and (key.startswith("tag:") or key.startswith("cat:"))
+                    and isinstance(val, str) and _HEX_RE.match(val)):
+                colors[key] = val.lower()
+    return {"theme": theme, "defaultSort": sort, "colors": colors}
 
 
 def _fts5_match_expr(query: str) -> str:
@@ -128,6 +153,29 @@ class Storage:
                 " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 (key, value),
             )
+
+    # --- settings (W7): one JSON document in kv -----------------------------
+    # Presentation preferences: theme, default sort, and tag/category colors.
+    # Stored under the kv key "settings" (which a reindex preserves). Validated
+    # and normalized on save so only clean values are ever stored or served.
+
+    def get_settings(self) -> dict:
+        import json
+        raw = self.kv_get("settings")
+        defaults = {"theme": "system", "defaultSort": "newest", "colors": {}}
+        if not raw:
+            return defaults
+        try:
+            data = json.loads(raw)
+        except Exception:
+            return defaults
+        return _normalize_settings(data)
+
+    def save_settings(self, data) -> dict:
+        import json
+        clean = _normalize_settings(data if isinstance(data, dict) else {})
+        self.kv_set("settings", json.dumps(clean))
+        return clean
 
     def search_bm25(self, query, limit) -> list[int]:
         if not query.strip():
