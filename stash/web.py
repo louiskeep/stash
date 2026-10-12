@@ -83,8 +83,8 @@ async def _form_field(request: Request, name: str) -> str:
 
 
 def _csrf_header_or_form(request: Request, form_token: str) -> str:
-    # htmx POSTs send the token in the X-CSRF-Token header (from the body's
-    # hx-headers); plain form POSTs send it in a hidden field. Accept either.
+    # fetch() POSTs (the board) send the token in the X-CSRF-Token header; plain
+    # form POSTs (login, logout) send it in a hidden field. Accept either.
     return request.headers.get("x-csrf-token") or form_token
 
 
@@ -188,10 +188,10 @@ class AuthGuard:
 _SEARCH_LIMIT = 200  # ranked ids the board intersects with its other filters
 
 async def board_page(request: Request) -> Response:
-    # The canvas page. It boots by fetching /board/notes; the server renders only
+    # The only screen. It boots by fetching /board/notes; the server renders only
     # the shell (with the CSRF meta), never note text, so note content reaches
     # the page as JSON data and is placed with textContent, never as HTML.
-    return _render(request, "board.html", {"active": "board"})
+    return _render(request, "board.html", {})
 
 
 async def board_notes(request: Request) -> Response:

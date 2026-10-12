@@ -40,8 +40,10 @@ def test_web_assets_present_on_disk():
     # via os.path.dirname(__file__).
     import stash.web as web
     here = os.path.dirname(os.path.abspath(web.__file__))
-    assert os.path.isfile(os.path.join(here, "templates", "base.html"))
-    assert os.path.isfile(os.path.join(here, "static", "app.css"))
+    assert os.path.isfile(os.path.join(here, "templates", "board.html"))
+    assert os.path.isfile(os.path.join(here, "templates", "login.html"))
+    assert os.path.isfile(os.path.join(here, "static", "board.js"))
+    assert os.path.isfile(os.path.join(here, "static", "board.css"))
 
 
 def test_wheel_force_includes_web_assets():

@@ -227,8 +227,16 @@
     Object.keys(catCount).sort().forEach(function (c) { opt("cat:" + c, "@" + c + " (" + catCount[c] + ")"); });
     Object.keys(tagCount).sort(function (a, b) { return tagCount[b] - tagCount[a]; })
       .forEach(function (t) { opt("tag:" + t, "#" + t + " (" + tagCount[t] + ")"); });
-    // Keep the current selection if it still exists.
-    topicSel.value = Array.prototype.some.call(topicSel.options, function (o) { return o.value === prev; }) ? prev : "";
+    // Keep the current selection if it still exists; otherwise reset to All AND
+    // clear the filter state, so the control and the board never disagree (a
+    // deleted note can remove the last option for the active topic).
+    var stillThere = Array.prototype.some.call(topicSel.options, function (o) { return o.value === prev; });
+    if (stillThere) {
+      topicSel.value = prev;
+    } else {
+      topicSel.value = "";
+      state.tag = state.cat = null;
+    }
   }
 
   // --- reminders rail ----------------------------------------------------
