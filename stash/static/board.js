@@ -19,7 +19,6 @@
   var grid = document.getElementById("grid");
   var hint = document.getElementById("hint");
   var wrap = document.getElementById("wrap");
-  var chipsBox = document.getElementById("chips");
 
   // Muuri is vendored at /static/muuri.min.js (never a runtime CDN). If it is
   // missing, say so clearly instead of failing silently.
@@ -31,7 +30,9 @@
   }
   var muuri = null;
 
-  var state = { notes: [], piles: [], order: "newest", tag: null, cat: null, timersOnly: false };
+  // searchIds: null = search inactive (show all); a Set = only these ids match.
+  var state = { notes: [], piles: [], order: "newest", tag: null, cat: null,
+                searchIds: null, from: null, to: null };
 
   // --- helpers -----------------------------------------------------------
   function api(path, body) {
@@ -94,10 +95,17 @@
   }
 
   // --- filtering ---------------------------------------------------------
+  // All active filters stack (AND): a note shows only if it passes every one.
+  // An empty control does not narrow.
   function passes(n) {
+    if (state.searchIds !== null && !state.searchIds.has(n.id)) return false;
     if (state.tag && (n.tags || []).indexOf(state.tag) === -1) return false;
     if (state.cat && n.category !== state.cat) return false;
-    if (state.timersOnly && !n.timer) return false;
+    if (state.from || state.to) {
+      var t = new Date(n.created_at).getTime();
+      if (state.from && t < state.from) return false;
+      if (state.to && t > state.to) return false;
+    }
     return true;
   }
   function applyFilter() {
@@ -110,6 +118,7 @@
     });
     muuri.show(show); muuri.hide(hide);
     hint.hidden = show.length !== 0;
+    buildRail();
   }
   function sortNotes(a, b) {
     var ta = new Date(a.created_at).getTime(), tb = new Date(b.created_at).getTime();
@@ -199,36 +208,59 @@
     });
   }
 
-  // --- chips -------------------------------------------------------------
-  function buildChips() {
+  // --- topic dropdown ----------------------------------------------------
+  // One select for both categories and tags: "@work (3)", "#billing (2)".
+  // Value is "cat:work" or "tag:billing"; empty is All.
+  var topicSel = document.getElementById("topic");
+  function buildTopics() {
     var tagCount = {}, catCount = {};
     state.notes.forEach(function (n) {
       (n.tags || []).forEach(function (t) { tagCount[t] = (tagCount[t] || 0) + 1; });
       if (n.category) catCount[n.category] = (catCount[n.category] || 0) + 1;
     });
-    chipsBox.innerHTML = "";
-    Object.keys(catCount).sort().forEach(function (c) {
-      chipsBox.appendChild(chip("@" + c, catCount[c], "cat", function () {
-        state.cat = state.cat === c ? null : c; state.tag = null; refreshChips(); applyFilter();
-      }, function () { return state.cat === c; }));
-    });
-    Object.keys(tagCount).sort(function (a, b) { return tagCount[b] - tagCount[a]; }).forEach(function (t) {
-      chipsBox.appendChild(chip("#" + t, tagCount[t], "tag", function () {
-        state.tag = state.tag === t ? null : t; state.cat = null; refreshChips(); applyFilter();
-      }, function () { return state.tag === t; }));
+    var prev = topicSel.value;
+    while (topicSel.options.length > 1) topicSel.remove(1);
+    function opt(value, label) {
+      var o = document.createElement("option"); o.value = value; o.textContent = label;
+      topicSel.appendChild(o);
+    }
+    Object.keys(catCount).sort().forEach(function (c) { opt("cat:" + c, "@" + c + " (" + catCount[c] + ")"); });
+    Object.keys(tagCount).sort(function (a, b) { return tagCount[b] - tagCount[a]; })
+      .forEach(function (t) { opt("tag:" + t, "#" + t + " (" + tagCount[t] + ")"); });
+    // Keep the current selection if it still exists.
+    topicSel.value = Array.prototype.some.call(topicSel.options, function (o) { return o.value === prev; }) ? prev : "";
+  }
+
+  // --- reminders rail ----------------------------------------------------
+  var railList = document.getElementById("railList");
+  var railEmpty = document.getElementById("railEmpty");
+  function buildRail() {
+    var due = state.notes.filter(function (n) { return n.timer; })
+      .sort(function (a, b) { return new Date(a.timer) - new Date(b.timer); });
+    railList.innerHTML = "";
+    railEmpty.hidden = due.length !== 0;
+    due.forEach(function (n) {
+      var li = document.createElement("li"); li.className = "rail-item"; li.tabIndex = 0;
+      li.dataset.id = n.id;
+      var when = document.createElement("span"); when.className = "rail-when"; when.textContent = until(n.timer);
+      var what = document.createElement("span"); what.className = "rail-what";
+      what.textContent = n.raw.split(/\s+/).slice(0, 6).join(" ");
+      li.appendChild(when); li.appendChild(what);
+      li.addEventListener("click", function () { focusNote(n.id); });
+      li.addEventListener("keydown", function (e) { if (e.key === "Enter") focusNote(n.id); });
+      railList.appendChild(li);
     });
   }
-  function chip(label, n, cls, fn, isOn) {
-    var b = document.createElement("button");
-    b.className = "chip " + cls + (isOn() ? " on" : "");
-    b.type = "button"; b._isOn = isOn;
-    b.textContent = label + " ";
-    var sp = document.createElement("span"); sp.className = "n"; sp.textContent = n; b.appendChild(sp);
-    b.addEventListener("click", fn);
-    return b;
-  }
-  function refreshChips() {
-    chipsBox.querySelectorAll(".chip").forEach(function (c) { c.classList.toggle("on", c._isOn()); });
+  function focusNote(id) {
+    if (!muuri) return;
+    // Reveal the note if a filter is hiding it, then scroll + highlight.
+    var it = muuri.getItems().find(function (i) { return +i.getElement().dataset.id === id; });
+    if (!it) return;
+    if (!it.isVisible()) muuri.show([it]);
+    var el = it.getElement();
+    el.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+    el.classList.add("flash");
+    setTimeout(function () { el.classList.remove("flash"); }, 1400);
   }
 
   // --- add / delete ------------------------------------------------------
@@ -238,7 +270,7 @@
       state.notes = state.notes.filter(function (n) { return n.id !== id; });
       var it = muuri.getItems().find(function (i) { return +i.getElement().dataset.id === id; });
       if (it) muuri.remove([it], { removeElements: true });
-      buildChips(); applyFilter();
+      buildTopics(); applyFilter();
     }).catch(function () { toast("Could not delete note"); });
   }
   function addNote(text) {
@@ -274,17 +306,46 @@
   }
   function closeComposer() { if (composer) { composer.remove(); composer = null; } }
 
-  // --- bar wiring --------------------------------------------------------
-  document.getElementById("order").addEventListener("click", function (e) {
-    var b = e.target.closest("button"); if (!b) return;
-    state.order = b.dataset.order;
-    this.querySelectorAll("button").forEach(function (x) { x.classList.toggle("on", x === b); });
-    buildBoard();
+  // --- search ------------------------------------------------------------
+  var searchInput = document.getElementById("search");
+  var searchTimer = null;
+  function runSearch(q) {
+    q = (q || "").trim();
+    if (!q) { state.searchIds = null; applyFilter(); return; }
+    fetch("/board/search?q=" + encodeURIComponent(q), { headers: { "X-CSRF-Token": CSRF } })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        state.searchIds = new Set(data.ids || []);
+        applyFilter();
+      }).catch(function () { toast("Search failed"); });
+  }
+  searchInput.addEventListener("input", function () {
+    var q = this.value;
+    if (searchTimer) clearTimeout(searchTimer);
+    searchTimer = setTimeout(function () { runSearch(q); }, 220);
   });
-  var timersBtn = document.getElementById("timersBtn");
-  timersBtn.addEventListener("click", function () {
-    state.timersOnly = !state.timersOnly; this.classList.toggle("on", state.timersOnly); applyFilter();
+
+  // --- topic / order / time controls -------------------------------------
+  topicSel.addEventListener("change", function () {
+    var v = this.value;
+    if (!v) { state.tag = state.cat = null; }
+    else if (v.indexOf("cat:") === 0) { state.cat = v.slice(4); state.tag = null; }
+    else { state.tag = v.slice(4); state.cat = null; }
+    applyFilter();
   });
+  document.getElementById("order").addEventListener("change", function () {
+    state.order = this.value; buildBoard();
+  });
+  function parseDT(v) { if (!v) return null; var t = new Date(v).getTime(); return isNaN(t) ? null : t; }
+  document.getElementById("from").addEventListener("change", function () { state.from = parseDT(this.value); applyFilter(); });
+  document.getElementById("to").addEventListener("change", function () { state.to = parseDT(this.value); applyFilter(); });
+  document.getElementById("clearBtn").addEventListener("click", function () {
+    state.tag = state.cat = null; state.searchIds = null; state.from = state.to = null;
+    searchInput.value = ""; topicSel.value = "";
+    document.getElementById("from").value = ""; document.getElementById("to").value = "";
+    applyFilter();
+  });
+
   document.getElementById("addBtn").addEventListener("click", function () {
     openComposer(wrap.clientWidth - 250, wrap.clientHeight - 170);
   });
@@ -301,7 +362,7 @@
       .then(function (data) {
         state.notes = data.notes || [];
         state.piles = data.piles || [];
-        buildChips(); buildBoard();
+        buildTopics(); buildBoard();
       });
   }
 
@@ -317,6 +378,7 @@
       var tEl = el.querySelector(".foot time"); if (tEl) tEl.textContent = ago(n.created_at);
       var tm = el.querySelector(".timer"); if (tm && n.timer) tm.textContent = until(n.timer);
     });
+    buildRail();  // keep the rail countdowns fresh too
   }, 30000);
 
   // expose a couple of internals for the piles module (Task 4) to extend.
