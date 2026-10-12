@@ -52,3 +52,25 @@ def test_interrupted_reindex_marks_notes_underived_so_repair_recovers(tmp_path):
 
     results = search(s, FakeEmbedder(), "brown fox")
     assert [r.raw for r in results] == ["the quick brown fox"]  # raw text intact
+
+
+def test_reindex_clears_clusters(tmp_path):
+    # Clusters are derived data; a reindex must leave no stale cluster rows or
+    # assignments behind (recluster recomputes them separately).
+    s = Storage.open(str(tmp_path / "c.db"))
+    nid = capture(s, FakeEmbedder(), "a note #x", "cli", _now()).note_id
+    # Simulate a prior recluster: one cluster, this note assigned to it.
+    s.conn.execute("INSERT INTO clusters(id, label, size, updated_at) VALUES (1,'topic',1,?)",
+                   (_now(),))
+    s.conn.execute("UPDATE note_meta SET cluster_id = 1 WHERE note_id = ?", (nid,))
+    s.conn.commit()
+    assert s.cluster_topics()  # present before
+
+    reindex(s, FakeEmbedder())
+
+    assert s.cluster_topics() == []
+    assert s.conn.execute(
+        "SELECT COUNT(*) AS n FROM note_meta WHERE cluster_id IS NOT NULL"
+    ).fetchone()["n"] == 0
+    # The note itself survived the reindex.
+    assert s.get_note(nid)["raw"] == "a note #x"

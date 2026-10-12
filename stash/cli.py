@@ -29,6 +29,7 @@ def main(argv=None, storage=None, embedder=None) -> int:
     sub.add_parser("repair")
     sub.add_parser("tags")  # deterministic Topics: tag -> count
     sub.add_parser("serve")  # Telegram poller + reminder scheduler daemon
+    sub.add_parser("recluster")  # discover topics via HDBSCAN (needs cluster extra)
     p_backup = sub.add_parser("backup")  # consistent online backup (VACUUM INTO)
     p_backup.add_argument("dest")
     p_backup.add_argument("--force", action="store_true",
@@ -44,6 +45,28 @@ def main(argv=None, storage=None, embedder=None) -> int:
         except RuntimeError as e:
             print(e, file=sys.stderr)
             return 1
+        return 0
+
+    if args.cmd == "recluster":
+        # Topic discovery over the stored embeddings. Opens storage but needs no
+        # embed model (it reads existing vectors) and skips the startup repair,
+        # so it is a self-contained derived-data recompute.
+        from stash.cluster import recluster as do_recluster, ClusterUnavailable
+        rstorage = storage
+        if rstorage is None:
+            rcfg = load_config(os.environ)
+            rstorage = Storage.open(rcfg.db_path, rcfg.busy_timeout_ms)
+        try:
+            result = do_recluster(rstorage)
+        except ClusterUnavailable as e:
+            print(e, file=sys.stderr)
+            return 1
+        if result.skipped:
+            print(f"recluster skipped: {result.reason}")
+            return 0
+        print(f"reclustered {result.n_notes} notes into {result.n_clusters} "
+              f"topics ({result.n_clustered} clustered, {result.n_outliers} "
+              f"outliers).")
         return 0
 
     if args.cmd == "backup":

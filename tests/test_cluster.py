@@ -138,6 +138,20 @@ def test_recluster_skips_small_corpus():
     assert s.cluster_topics() == []
 
 
+def test_clear_clusters_empties_table_and_assignments():
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        s = _two_themes_with_outliers()
+        recluster(s, min_notes=10, min_cluster_size=4)
+    assert s.cluster_topics()  # has clusters
+    s.clear_clusters()
+    assert s.cluster_topics() == []
+    remaining = s.conn.execute(
+        "SELECT COUNT(*) AS n FROM note_meta WHERE cluster_id IS NOT NULL"
+    ).fetchone()["n"]
+    assert remaining == 0
+
+
 def test_label_prefers_shared_tag():
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")

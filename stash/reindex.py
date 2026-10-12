@@ -10,6 +10,11 @@ def reindex(storage, embedder) -> None:
         conn.execute("DELETE FROM note_meta")
         conn.execute("DELETE FROM vec_notes")
         conn.execute("INSERT INTO notes_fts(notes_fts) VALUES ('delete-all')")
+        # Deleting note_meta drops every cluster_id; also drop the clusters rows
+        # so no stale topic survives pointing at rebuilt notes. Clusters are
+        # derived data that `stash recluster` recomputes; reindex does not
+        # recompute them (derive() does not cluster), it only clears them.
+        conn.execute("DELETE FROM clusters")
         # Mark every note underived in the same transaction as the deletes
         # above, before any re-derivation runs. If derivation then fails
         # partway through the loop below, the not-yet-rebuilt notes are left
