@@ -64,7 +64,7 @@ means publishing to a non-loopback address, and that is only safe behind TLS:
 Run a consistent backup against the running container's database:
 
 ```bash
-docker exec <container> uv run --no-dev stash backup /data/stash-backup.db
+docker exec <container> stash backup /data/stash-backup.db
 ```
 
 The backup lands on the `/data` volume; copy it off with `docker cp` if you want

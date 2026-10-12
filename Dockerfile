@@ -14,7 +14,8 @@ ENV HF_HOME=/cache/huggingface \
     STASH_DB_PATH=/data/stash.db \
     STASH_WEB_BIND=0.0.0.0 \
     STASH_WEB_PORT=8000 \
-    UV_LINK_MODE=copy
+    UV_LINK_MODE=copy \
+    PATH=/app/.venv/bin:$PATH
 
 WORKDIR /app
 
@@ -36,4 +37,7 @@ EXPOSE 8000
 # the host. That is NOT safe on an open network without TLS: front it with a TLS
 # reverse proxy, or publish only to 127.0.0.1 on the host (-p 127.0.0.1:8000:8000).
 # See docs/guides/docker.md and docs/guides/web-setup.md.
-CMD ["uv", "run", "--no-dev", "stash", "serve"]
+#
+# Run the installed console script directly off the venv on PATH, not `uv run`,
+# so container start needs no network and does no lock re-resolution.
+CMD ["stash", "serve"]

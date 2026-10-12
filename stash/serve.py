@@ -95,16 +95,39 @@ def acquire_single_instance(db_path: str):
     return fh
 
 
+def _telegram_configured(config) -> bool:
+    """True when both Telegram inputs are present. Either both or neither:
+    a bot token with no allow-list would accept no one, and an allow-list with
+    no token has nothing to poll, so a half-configured channel is an error, not
+    a channel."""
+    return bool(config.telegram_bot_token) and bool(config.allowed_sender_ids)
+
+
+def _web_configured(config) -> bool:
+    return bool(config.web_password) and bool(config.web_session_secret)
+
+
 def _validate_config(config) -> None:
-    # Fail fast, before touching the DB or the single-instance lock: a
-    # daemon started without a token or an allow-list would otherwise sit
-    # there polling with every Telegram call erroring, or accepting no one's
-    # messages, with nothing to say why until someone reads the logs.
-    if not config.telegram_bot_token:
-        raise RuntimeError("stash serve: STASH_TELEGRAM_BOT_TOKEN is not set")
-    if not config.allowed_sender_ids:
+    # Fail fast, before touching the DB or the single-instance lock. The daemon
+    # needs at least one channel to be worth running: Telegram, the web UI, or
+    # both. A half-configured Telegram (token without allow-list, or the
+    # reverse) is a misconfiguration, not a valid web-only start, so it is
+    # rejected with a specific message rather than silently ignored.
+    tg_token = bool(config.telegram_bot_token)
+    tg_ids = bool(config.allowed_sender_ids)
+    if tg_token and not tg_ids:
         raise RuntimeError(
-            "stash serve: STASH_ALLOWED_SENDER_IDS is empty; refusing to start")
+            "stash serve: STASH_TELEGRAM_BOT_TOKEN is set but "
+            "STASH_ALLOWED_SENDER_IDS is empty; refusing to start")
+    if tg_ids and not tg_token:
+        raise RuntimeError(
+            "stash serve: STASH_ALLOWED_SENDER_IDS is set but "
+            "STASH_TELEGRAM_BOT_TOKEN is not; refusing to start")
+    if not _telegram_configured(config) and not _web_configured(config):
+        raise RuntimeError(
+            "stash serve: nothing to run. Configure the web UI "
+            "(STASH_WEB_PASSWORD + STASH_WEB_SESSION_SECRET) or Telegram "
+            "(STASH_TELEGRAM_BOT_TOKEN + STASH_ALLOWED_SENDER_IDS), or both.")
 
 
 async def serve(config) -> None:
@@ -126,10 +149,6 @@ async def serve(config) -> None:
         reindex(storage, embedder)
         storage.kv_set("embed_model", embedder.name)
 
-    client = TelegramClient(config.telegram_bot_token)
-    ingest = TelegramIngest(client)
-    delivery = TelegramDelivery(client)
-    sched_lock = asyncio.Lock()
     stop = asyncio.Event()
 
     def _request_stop(*_):
@@ -138,42 +157,56 @@ async def serve(config) -> None:
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, _request_stop)
 
-    async def poll_loop():
-        while not stop.is_set():
-            try:
-                await handle_updates(storage, embedder, delivery, ingest,
-                                     config.allowed_sender_ids, _utc_now,
-                                     config.telegram_bot_token)
-            except Exception as e:
-                print(f"stash serve: poll error: {_scrub(repr(e), config.telegram_bot_token)}",
-                      file=sys.stderr)
-                await asyncio.sleep(1)
+    # The Telegram poller and the reminder scheduler run only when Telegram is
+    # configured. The scheduler delivers reminders through Telegram and only
+    # ever claims reminders whose chat_id is in the allow-list, so with no
+    # Telegram there is nothing for it to deliver; a web-only start skips both,
+    # and reminders are still captured and shown in the web UI. The client is
+    # built only on this path so a web-only start opens no Telegram connection.
+    client = None
+    coros = []
+    if _telegram_configured(config):
+        client = TelegramClient(config.telegram_bot_token)
+        ingest = TelegramIngest(client)
+        delivery = TelegramDelivery(client)
+        sched_lock = asyncio.Lock()
 
-    async def sched_loop():
-        while not stop.is_set():
-            try:
-                await scheduler_tick(storage, delivery, config.reminder_lease_seconds,
-                                     config.reminder_max_attempts, _utc_now, sched_lock,
-                                     config.allowed_sender_ids)
-            except Exception as e:
-                print(f"stash serve: scheduler error: "
-                      f"{_scrub(repr(e), config.telegram_bot_token)}", file=sys.stderr)
-            await asyncio.sleep(config.scheduler_tick_seconds)
+        async def poll_loop():
+            while not stop.is_set():
+                try:
+                    await handle_updates(storage, embedder, delivery, ingest,
+                                         config.allowed_sender_ids, _utc_now,
+                                         config.telegram_bot_token)
+                except Exception as e:
+                    print(f"stash serve: poll error: {_scrub(repr(e), config.telegram_bot_token)}",
+                          file=sys.stderr)
+                    await asyncio.sleep(1)
+
+        async def sched_loop():
+            while not stop.is_set():
+                try:
+                    await scheduler_tick(storage, delivery, config.reminder_lease_seconds,
+                                         config.reminder_max_attempts, _utc_now, sched_lock,
+                                         config.allowed_sender_ids)
+                except Exception as e:
+                    print(f"stash serve: scheduler error: "
+                          f"{_scrub(repr(e), config.telegram_bot_token)}", file=sys.stderr)
+                await asyncio.sleep(config.scheduler_tick_seconds)
+
+        coros.extend([poll_loop(), sched_loop()])
 
     # Spec 6.11: the web server shares this one process and DB with the poller
-    # and scheduler. It is optional: if the web password/secret are unset, the
-    # daemon still runs Telegram-only (M2 behavior) rather than refusing to
-    # start, so adding the web UI never breaks an existing bot-only deployment.
+    # and scheduler. It is optional, and so is Telegram, but _validate_config
+    # guarantees at least one is configured, so there is always something here.
     web_coro = _web_loop(config, storage, embedder, stop)
-
-    coros = [poll_loop(), sched_loop()]
     if web_coro is not None:
         coros.append(web_coro)
 
     try:
         await asyncio.gather(*coros)
     finally:
-        await client.aclose()
+        if client is not None:
+            await client.aclose()
         lock.close()
 
 

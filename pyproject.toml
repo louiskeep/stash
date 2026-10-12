@@ -21,10 +21,17 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 # Ship the stash package. Hatchling includes every file under a packaged
-# directory by default, so the web templates and static assets (which web.py
-# locates relative to its own file via os.path.dirname(__file__)) travel with
-# the module in an installed wheel without a separate data declaration.
+# directory by default (all are git-tracked; caches are gitignored), so the web
+# templates and static assets travel with the module in an installed wheel.
+# web.py locates them relative to its own file via os.path.dirname(__file__),
+# so they must stay inside the package and no exclude rule may drop them.
 packages = ["stash"]
+# force-include is additive and does not restrict the default package inclusion,
+# so it pins the assets into the wheel without risking the .py files. It keeps
+# the runtime-critical templates/static present even if the defaults change.
+[tool.hatch.build.targets.wheel.force-include]
+"stash/templates" = "stash/templates"
+"stash/static" = "stash/static"
 
 [dependency-groups]
 dev = ["pytest>=8", "pytest-asyncio>=0.23"]
