@@ -144,8 +144,12 @@
     for (var i = 0; i < items.length; i++) {
       var id = +items[i].getElement().dataset.id;
       var saved = posFor(id);
+      var itemW = items[i].getWidth ? items[i].getWidth() : 208;
+      // Clamp x to the visible width so no card sits off the right edge: the
+      // board scrolls vertically only, never horizontally.
+      var maxX = Math.max(pad, width - itemW - pad);
       var x, y;
-      if (saved) { x = saved.x; y = saved.y; }
+      if (saved) { x = Math.max(pad, Math.min(saved.x, maxX)); y = Math.max(pad, saved.y); }
       else {
         x = pad + (flow % cols) * COL;
         y = pad + Math.floor(flow / cols) * ROW;
@@ -208,55 +212,61 @@
     });
   }
 
-  // --- topic dropdown ----------------------------------------------------
-  // One select for both categories and tags: "@work (3)", "#billing (2)".
-  // Value is "cat:work" or "tag:billing"; empty is All.
-  var topicSel = document.getElementById("topic");
+  // --- category + tag dropdowns ------------------------------------------
+  // Two independent selects. Category value is the bare category, Tag value the
+  // bare tag; empty is All. They AND in passes(n).
+  var catSel = document.getElementById("category");
+  var tagSel = document.getElementById("tag");
+  function fillSelect(sel, counts, prefix, stateKey, sortByCount) {
+    var prev = sel.value;
+    while (sel.options.length > 1) sel.remove(1);
+    var keys = Object.keys(counts);
+    keys.sort(sortByCount ? function (a, b) { return counts[b] - counts[a]; }
+                          : function (a, b) { return a.localeCompare(b); });
+    keys.forEach(function (k) {
+      var o = document.createElement("option"); o.value = k;
+      o.textContent = prefix + k + " (" + counts[k] + ")"; sel.appendChild(o);
+    });
+    // Keep selection if it still exists; else reset to All and clear the state,
+    // so control and board never disagree after a delete removes the last option.
+    if (Array.prototype.some.call(sel.options, function (o) { return o.value === prev; })) {
+      sel.value = prev;
+    } else {
+      sel.value = "";
+      state[stateKey] = null;
+    }
+  }
   function buildTopics() {
     var tagCount = {}, catCount = {};
     state.notes.forEach(function (n) {
       (n.tags || []).forEach(function (t) { tagCount[t] = (tagCount[t] || 0) + 1; });
       if (n.category) catCount[n.category] = (catCount[n.category] || 0) + 1;
     });
-    var prev = topicSel.value;
-    while (topicSel.options.length > 1) topicSel.remove(1);
-    function opt(value, label) {
-      var o = document.createElement("option"); o.value = value; o.textContent = label;
-      topicSel.appendChild(o);
-    }
-    Object.keys(catCount).sort().forEach(function (c) { opt("cat:" + c, "@" + c + " (" + catCount[c] + ")"); });
-    Object.keys(tagCount).sort(function (a, b) { return tagCount[b] - tagCount[a]; })
-      .forEach(function (t) { opt("tag:" + t, "#" + t + " (" + tagCount[t] + ")"); });
-    // Keep the current selection if it still exists; otherwise reset to All AND
-    // clear the filter state, so the control and the board never disagree (a
-    // deleted note can remove the last option for the active topic).
-    var stillThere = Array.prototype.some.call(topicSel.options, function (o) { return o.value === prev; });
-    if (stillThere) {
-      topicSel.value = prev;
-    } else {
-      topicSel.value = "";
-      state.tag = state.cat = null;
-    }
+    fillSelect(catSel, catCount, "@", "cat", false);
+    fillSelect(tagSel, tagCount, "#", "tag", true);
   }
 
-  // --- reminders rail ----------------------------------------------------
-  var railList = document.getElementById("railList");
-  var railEmpty = document.getElementById("railEmpty");
+  // --- reminders dropdown ------------------------------------------------
+  var remList = document.getElementById("remList");
+  var remEmpty = document.getElementById("remEmpty");
+  var remCount = document.getElementById("remindersCount");
   function buildRail() {
     var due = state.notes.filter(function (n) { return n.timer; })
       .sort(function (a, b) { return new Date(a.timer) - new Date(b.timer); });
-    railList.innerHTML = "";
-    railEmpty.hidden = due.length !== 0;
+    remList.innerHTML = "";
+    remEmpty.hidden = due.length !== 0;
+    if (due.length) { remCount.textContent = due.length; remCount.hidden = false; }
+    else { remCount.hidden = true; }
     due.forEach(function (n) {
-      var li = document.createElement("li"); li.className = "rail-item"; li.tabIndex = 0;
-      li.dataset.id = n.id;
-      var when = document.createElement("span"); when.className = "rail-when"; when.textContent = until(n.timer);
-      var what = document.createElement("span"); what.className = "rail-what";
+      var li = document.createElement("li"); li.className = "rem-item"; li.tabIndex = 0;
+      li.setAttribute("role", "menuitem");
+      var when = document.createElement("span"); when.className = "rem-when"; when.textContent = until(n.timer);
+      var what = document.createElement("span"); what.className = "rem-what";
       what.textContent = n.raw.split(/\s+/).slice(0, 6).join(" ");
       li.appendChild(when); li.appendChild(what);
-      li.addEventListener("click", function () { focusNote(n.id); });
-      li.addEventListener("keydown", function (e) { if (e.key === "Enter") focusNote(n.id); });
-      railList.appendChild(li);
+      li.addEventListener("click", function () { focusNote(n.id); closeReminders(); });
+      li.addEventListener("keydown", function (e) { if (e.key === "Enter") { focusNote(n.id); closeReminders(); } });
+      remList.appendChild(li);
     });
   }
   function focusNote(id) {
@@ -333,25 +343,48 @@
     searchTimer = setTimeout(function () { runSearch(q); }, 220);
   });
 
-  // --- topic / order / time controls -------------------------------------
-  topicSel.addEventListener("change", function () {
-    var v = this.value;
-    if (!v) { state.tag = state.cat = null; }
-    else if (v.indexOf("cat:") === 0) { state.cat = v.slice(4); state.tag = null; }
-    else { state.tag = v.slice(4); state.cat = null; }
-    applyFilter();
-  });
+  // --- category / tag / order / date controls ----------------------------
+  catSel.addEventListener("change", function () { state.cat = this.value || null; applyFilter(); });
+  tagSel.addEventListener("change", function () { state.tag = this.value || null; applyFilter(); });
   document.getElementById("order").addEventListener("change", function () {
     state.order = this.value; buildBoard();
   });
-  function parseDT(v) { if (!v) return null; var t = new Date(v).getTime(); return isNaN(t) ? null : t; }
-  document.getElementById("from").addEventListener("change", function () { state.from = parseDT(this.value); applyFilter(); });
-  document.getElementById("to").addEventListener("change", function () { state.to = parseDT(this.value); applyFilter(); });
+  var fromInput = document.getElementById("from"), toInput = document.getElementById("to");
+  // Date-only inputs. From is the start of its day; To includes the whole day
+  // (end-of-day), so a note created any time on the To date still matches.
+  function parseFrom(v) { if (!v) return null; var t = new Date(v + "T00:00:00").getTime(); return isNaN(t) ? null : t; }
+  function parseTo(v) { if (!v) return null; var t = new Date(v + "T23:59:59.999").getTime(); return isNaN(t) ? null : t; }
+  fromInput.addEventListener("change", function () { state.from = parseFrom(this.value); applyFilter(); });
+  toInput.addEventListener("change", function () { state.to = parseTo(this.value); applyFilter(); });
   document.getElementById("clearBtn").addEventListener("click", function () {
+    clearFilters(); applyFilter();
+  });
+  function clearFilters() {
     state.tag = state.cat = null; state.searchIds = null; state.from = state.to = null;
-    searchInput.value = ""; topicSel.value = "";
-    document.getElementById("from").value = ""; document.getElementById("to").value = "";
-    applyFilter();
+    searchInput.value = ""; catSel.value = ""; tagSel.value = "";
+    fromInput.value = ""; toInput.value = "";
+  }
+
+  // --- reminders dropdown toggle -----------------------------------------
+  var remindersBtn = document.getElementById("remindersBtn");
+  var remindersPanel = document.getElementById("remindersPanel");
+  function openReminders() {
+    remindersPanel.hidden = false; remindersBtn.setAttribute("aria-expanded", "true");
+    document.addEventListener("click", outsideReminders, true);
+    document.addEventListener("keydown", escReminders, true);
+  }
+  function closeReminders() {
+    remindersPanel.hidden = true; remindersBtn.setAttribute("aria-expanded", "false");
+    document.removeEventListener("click", outsideReminders, true);
+    document.removeEventListener("keydown", escReminders, true);
+  }
+  function outsideReminders(e) {
+    if (!remindersPanel.contains(e.target) && e.target !== remindersBtn && !remindersBtn.contains(e.target)) closeReminders();
+  }
+  function escReminders(e) { if (e.key === "Escape") { closeReminders(); remindersBtn.focus(); } }
+  remindersBtn.addEventListener("click", function (e) {
+    e.stopPropagation();
+    if (remindersPanel.hidden) openReminders(); else closeReminders();
   });
 
   document.getElementById("addBtn").addEventListener("click", function () {

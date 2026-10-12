@@ -14,8 +14,12 @@
       <input type="search" id="search" placeholder="Search your notes" aria-label="Search notes" autocomplete="off">
     </div>
     <label class="field">
-      <span class="field-label">Topic</span>
-      <select id="topic" aria-label="Filter by topic"><option value="">All</option></select>
+      <span class="field-label">Category</span>
+      <select id="category" aria-label="Filter by category"><option value="">All</option></select>
+    </label>
+    <label class="field">
+      <span class="field-label">Tag</span>
+      <select id="tag" aria-label="Filter by tag"><option value="">All</option></select>
     </label>
     <label class="field">
       <span class="field-label">Order</span>
@@ -26,14 +30,23 @@
     </label>
     <label class="field">
       <span class="field-label">From</span>
-      <input type="datetime-local" id="from" aria-label="From date">
+      <input type="date" id="from" aria-label="From date">
     </label>
     <label class="field">
       <span class="field-label">To</span>
-      <input type="datetime-local" id="to" aria-label="To date">
+      <input type="date" id="to" aria-label="To date">
     </label>
     <button class="ghost" id="clearBtn" type="button" title="Clear all filters">Clear</button>
     <span class="spacer"></span>
+    <div class="reminders-wrap">
+      <button class="ghost" id="remindersBtn" type="button" aria-haspopup="true" aria-expanded="false">
+        Reminders <span class="count" id="remindersCount" hidden></span>
+      </button>
+      <div class="reminders-panel" id="remindersPanel" hidden role="menu" aria-label="Active reminders">
+        <ul class="rem-list" id="remList"></ul>
+        <div class="rem-empty" id="remEmpty">No active reminders.</div>
+      </div>
+    </div>
     <form class="logout" method="post" action="/logout" style="margin:0">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button class="ghost" type="submit">Sign out</button>
@@ -41,10 +54,11 @@
   </div>
 
   <div class="stage">
-    <aside class="rail" id="rail" aria-label="Active reminders">
-      <div class="rail-head">Reminders</div>
-      <ul class="rail-list" id="railList"></ul>
-      <div class="rail-empty" id="railEmpty">No active reminders.</div>
+    <aside class="boards" id="boards" aria-label="Saved boards">
+      <div class="boards-head">Boards</div>
+      <button class="board-save" id="saveBoardBtn" type="button">+ Save current</button>
+      <ul class="boards-list" id="boardsList"></ul>
+      <div class="boards-empty" id="boardsEmpty">Set some filters, then save them as a board.</div>
     </aside>
     <div class="board-wrap" id="wrap">
       <div class="grid" id="grid"></div>

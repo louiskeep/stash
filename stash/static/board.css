@@ -38,6 +38,14 @@ body {
   display: flex; flex-direction: column;
 }
 
+/* Thin, subtle scrollbars throughout. */
+* { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--line); border-radius: 8px; border: 2px solid transparent;
+  background-clip: content-box; }
+*::-webkit-scrollbar-thumb:hover { background: var(--ink-soft); background-clip: content-box; }
+
 .bar {
   flex: none; display: flex; align-items: center; gap: 0.75rem;
   padding: 0.7rem 1rem; background: var(--paper); border-bottom: 1px solid var(--line);
@@ -63,29 +71,54 @@ body {
 .search input:focus-visible, .field select:focus-visible, .field input:focus-visible,
 .ghost:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-/* stage = rail + board, filling the screen under the bar */
+/* stage = saved-boards column + board, filling the screen under the bar */
 .stage { flex: 1 1 auto; display: flex; min-height: 0; }
 
-.rail { flex: none; width: 210px; border-right: 1px solid var(--line); background: var(--paper);
-  overflow-y: auto; padding: 0.6rem 0.5rem; }
-.rail-head { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em;
-  color: var(--ink-soft); padding: 0 0.3rem 0.4rem; }
-.rail-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
-.rail-item { display: flex; flex-direction: column; gap: 2px; padding: 0.45rem 0.5rem;
-  border: 1px solid var(--line); border-left: 3px solid var(--warn); border-radius: 6px;
-  background: var(--paper); cursor: pointer; }
-.rail-item:hover { border-color: var(--warn); background: var(--warn-soft); }
-.rail-when { font-size: 0.74rem; font-weight: 600; color: var(--warn); font-variant-numeric: tabular-nums; }
-.rail-what { font-family: var(--mono); font-size: 0.72rem; color: var(--ink); line-height: 1.3;
+/* Saved boards (left column) */
+.boards { flex: none; width: 196px; border-right: 1px solid var(--line); background: var(--paper);
+  overflow-y: auto; padding: 0.6rem 0.5rem; display: flex; flex-direction: column; gap: 0.4rem; }
+.boards-head { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--ink-soft); padding: 0 0.3rem; }
+.board-save { border: 1px dashed var(--line); background: none; color: var(--accent); font: inherit;
+  font-size: 0.8rem; padding: 0.4rem 0.5rem; border-radius: 6px; cursor: pointer; text-align: left; }
+.board-save:hover { border-color: var(--accent); background: var(--accent-soft); }
+.boards-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; }
+.board-row { display: flex; align-items: center; gap: 0.25rem; }
+.board-row .open { flex: 1 1 auto; text-align: left; border: 1px solid var(--line); background: var(--paper);
+  color: var(--ink); font: inherit; font-size: 0.82rem; padding: 0.38rem 0.5rem; border-radius: 6px;
+  cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.board-row .open:hover { border-color: var(--accent); }
+.board-row .open.on { border-color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+.board-row .rm { border: none; background: none; color: var(--ink-soft); cursor: pointer; font-size: 0.9rem;
+  padding: 2px 5px; border-radius: 4px; }
+.board-row .rm:hover { color: var(--warn); background: var(--warn-soft); }
+.boards-empty { color: var(--ink-soft); font-size: 0.74rem; padding: 0.2rem 0.3rem; }
+.board-name-input { border: 1px solid var(--accent); border-radius: 6px; background: var(--paper);
+  color: var(--ink); font: inherit; font-size: 0.82rem; padding: 0.35rem 0.5rem; width: 100%; }
+
+/* Reminders button + dropdown (top bar) */
+.reminders-wrap { position: relative; }
+#remindersBtn .count { display: inline-flex; align-items: center; justify-content: center; min-width: 16px;
+  height: 16px; padding: 0 4px; margin-left: 0.3rem; border-radius: 999px; background: var(--warn);
+  color: #fff; font-size: 0.66rem; }
+.reminders-panel { position: absolute; top: calc(100% + 6px); right: 0; width: 260px; max-height: 60vh;
+  overflow-y: auto; background: var(--paper); border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 10px 30px -8px var(--shadow); padding: 0.5rem; z-index: 60; }
+.rem-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.3rem; }
+.rem-item { display: flex; flex-direction: column; gap: 2px; padding: 0.45rem 0.5rem;
+  border: 1px solid var(--line); border-left: 3px solid var(--warn); border-radius: 6px; cursor: pointer; }
+.rem-item:hover, .rem-item:focus-visible { border-color: var(--warn); background: var(--warn-soft); outline: none; }
+.rem-when { font-size: 0.74rem; font-weight: 600; color: var(--warn); font-variant-numeric: tabular-nums; }
+.rem-what { font-family: var(--mono); font-size: 0.72rem; color: var(--ink); line-height: 1.3;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.rail-empty { color: var(--ink-soft); font-size: 0.78rem; padding: 0.4rem 0.3rem; }
+.rem-empty { color: var(--ink-soft); font-size: 0.78rem; padding: 0.4rem 0.3rem; }
 
 .note.flash { animation: flash 1.4s ease; }
 @keyframes flash { 0%, 100% { box-shadow: 0 1px 2px var(--shadow), 0 6px 14px -8px var(--shadow); }
   25% { box-shadow: 0 0 0 3px var(--accent), 0 10px 24px -8px var(--shadow); } }
 @media (prefers-reduced-motion: reduce) { .note.flash { animation: none; outline: 2px solid var(--accent); } }
 
-.board-wrap { position: relative; flex: 1 1 auto; overflow: auto; min-width: 0;
+.board-wrap { position: relative; flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; min-width: 0;
   background: radial-gradient(circle at 1px 1px, var(--line) 1px, transparent 0) 0 0 / 26px 26px, var(--board); }
 .hint { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; color: var(--ink-soft); font-size: 0.95rem; opacity: 0.8; padding: 1rem; text-align: center; }
 .grid { position: relative; margin: 0; padding: 1rem; min-height: 100%; }
@@ -151,9 +184,9 @@ body {
   .bar { gap: 0.5rem; }
   .search { flex-basis: 100%; order: 5; max-width: none; }
   .field select { max-width: 8rem; }
-  /* The rail becomes a short horizontal strip above the board on small screens. */
+  /* The saved-boards column becomes a short strip above the board on small screens. */
   .stage { flex-direction: column; }
-  .rail { width: auto; max-height: 30vh; border-right: none; border-bottom: 1px solid var(--line); }
-  .rail-list { flex-direction: row; flex-wrap: wrap; }
-  .rail-item { min-width: 9rem; }
+  .boards { width: auto; max-height: 26vh; border-right: none; border-bottom: 1px solid var(--line); }
+  .boards-list { flex-direction: row; flex-wrap: wrap; }
+  .reminders-panel { width: min(260px, 90vw); }
 }
