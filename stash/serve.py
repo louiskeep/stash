@@ -81,17 +81,31 @@ def acquire_single_instance(db_path: str):
     """Take an OS-level exclusive lock next to the DB so at most one `stash
     serve` runs against it. Held for the process lifetime (a leaked fd is not
     a leak here: it lives as long as the process and the OS reclaims it on
-    exit or crash, which also releases the flock).
+    exit or crash, which also releases the lock).
+
+    Uses fcntl.flock on POSIX and msvcrt.locking on Windows, since fcntl does
+    not exist on Windows. Both take an advisory exclusive lock that the OS drops
+    when the process ends, so a crashed daemon never strands the lock.
     """
-    import fcntl
+    _ALREADY = "another `stash serve` is already running on this database"
     lock_path = db_path + ".serve.lock"
     fh = open(lock_path, "w")
+    try:
+        import fcntl
+    except ModuleNotFoundError:
+        # Windows: no fcntl. Lock one byte with msvcrt instead.
+        import msvcrt
+        try:
+            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError as exc:
+            fh.close()
+            raise RuntimeError(_ALREADY) from exc
+        return fh
     try:
         fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError as exc:
         fh.close()
-        raise RuntimeError(
-            "another `stash serve` is already running on this database") from exc
+        raise RuntimeError(_ALREADY) from exc
     return fh
 
 
@@ -154,8 +168,21 @@ async def serve(config) -> None:
     def _request_stop(*_):
         stop.set()
     loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, _request_stop)
+    # loop.add_signal_handler is POSIX-only (Windows' event loop raises
+    # NotImplementedError), and SIGTERM does not exist on Windows. Try the loop
+    # handler per signal and fall back to signal.signal, which handles SIGINT
+    # (Ctrl+C) on Windows. A signal we cannot install on this platform is
+    # skipped rather than fatal.
+    for sig in (signal.SIGINT, getattr(signal, "SIGTERM", None)):
+        if sig is None:
+            continue
+        try:
+            loop.add_signal_handler(sig, _request_stop)
+        except (NotImplementedError, RuntimeError, ValueError, OSError):
+            try:
+                signal.signal(sig, lambda *_: stop.set())
+            except (ValueError, OSError):
+                pass  # not installable on this platform/thread; skip it
 
     # The Telegram poller and the reminder scheduler run only when Telegram is
     # configured. The scheduler delivers reminders through Telegram and only
