@@ -37,7 +37,9 @@ uv sync --extra cluster && uv run stash recluster   # discover topics (optional)
 (`python -m stash ...` is the no-install equivalent of `uv run stash ...`.)
 
 The web UI turns on once `STASH_WEB_PASSWORD` and `STASH_WEB_SESSION_SECRET` are
-set; open http://127.0.0.1:8000. Guides: `docs/guides/web-setup.md`,
+set; open http://127.0.0.1:8000. The home page is the Board, a canvas of your
+notes as draggable cards you can arrange, stack into piles, and filter; Search,
+Timeline, Topics, and Reminders are in the nav. Guides: `docs/guides/web-setup.md`,
 `docs/guides/telegram-setup.md`, `docs/guides/docker.md` (one-container install),
 `docs/guides/clustering.md` (automatic topics).
 

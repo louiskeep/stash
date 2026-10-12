@@ -8,11 +8,12 @@ routes not yet imagined here too; this test pins the current table explicitly.
 import pytest
 
 GET_ROUTES = [
-    "/", "/search", "/search?q=milk", "/timeline", "/topics",
-    "/topics/tag/groceries", "/topics/category/work", "/topics/cluster/1",
-    "/note/1", "/reminders",
+    "/", "/board/notes", "/search", "/search/results?q=milk", "/timeline",
+    "/topics", "/topics/tag/groceries", "/topics/category/work",
+    "/topics/cluster/1", "/note/1", "/reminders",
 ]
-POST_ROUTES = ["/add", "/logout"]
+POST_ROUTES = ["/add", "/logout", "/board/positions", "/board/piles",
+               "/board/add", "/board/delete"]
 OPEN_ROUTES = ["/healthz", "/login", "/static/app.css"]
 
 

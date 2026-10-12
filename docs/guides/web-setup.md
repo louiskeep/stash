@@ -42,7 +42,11 @@ still runs. Open:
 http://127.0.0.1:8000
 ```
 
-Log in with your password. You get:
+Log in with your password. You land on the **Board** - a canvas of your notes as
+draggable paper cards. Drag to arrange them (the layout is saved on the server,
+so it is the same on any device), drop one card onto another to stack them into a
+labeled pile, filter by time order, a tag or category, or active timers, and add
+a note with the + button or a double-click on the board. The nav also has:
 
 - **Search** - hybrid keyword + meaning search, with a box to stash a new note.
 - **Timeline** - everything you have stashed, newest first.
