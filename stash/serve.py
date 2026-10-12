@@ -160,8 +160,59 @@ async def serve(config) -> None:
                       f"{_scrub(repr(e), config.telegram_bot_token)}", file=sys.stderr)
             await asyncio.sleep(config.scheduler_tick_seconds)
 
+    # Spec 6.11: the web server shares this one process and DB with the poller
+    # and scheduler. It is optional: if the web password/secret are unset, the
+    # daemon still runs Telegram-only (M2 behavior) rather than refusing to
+    # start, so adding the web UI never breaks an existing bot-only deployment.
+    web_coro = _web_loop(config, storage, embedder, stop)
+
+    coros = [poll_loop(), sched_loop()]
+    if web_coro is not None:
+        coros.append(web_coro)
+
     try:
-        await asyncio.gather(poll_loop(), sched_loop())
+        await asyncio.gather(*coros)
     finally:
         await client.aclose()
         lock.close()
+
+
+def _web_loop(config, storage, embedder, stop):
+    """Return a coroutine that runs the uvicorn web server until `stop` is set,
+    or None if the web UI is not configured.
+
+    The server is driven directly (not uvicorn.run, which installs its own
+    signal handlers and owns the loop): a watcher coroutine flips
+    `server.should_exit` when the shared stop event fires, so one SIGINT/SIGTERM
+    brings down all three loops together.
+    """
+    if not config.web_password or not config.web_session_secret:
+        print("stash serve: web UI disabled (STASH_WEB_PASSWORD / "
+              "STASH_WEB_SESSION_SECRET not set); running Telegram-only.",
+              file=sys.stderr)
+        return None
+
+    import uvicorn
+    from stash.web import build_app
+
+    app = build_app(storage, embedder, config)
+    uconfig = uvicorn.Config(
+        app, host=config.web_bind, port=config.web_port,
+        log_level="warning", lifespan="off",
+    )
+    server = uvicorn.Server(uconfig)
+    # uvicorn would otherwise install SIGINT/SIGTERM handlers that fight the
+    # ones serve() set; serve() owns shutdown, so disable uvicorn's.
+    server.install_signal_handlers = lambda: None
+
+    async def run():
+        async def _watch_stop():
+            await stop.wait()
+            server.should_exit = True
+        watcher = asyncio.ensure_future(_watch_stop())
+        try:
+            await server.serve()
+        finally:
+            watcher.cancel()
+
+    return run()
