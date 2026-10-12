@@ -59,9 +59,14 @@ canvas of your notes as draggable paper cards. Everything else is a control on i
   timers as live countdowns; click one to jump to its note.
 
 All the filters stack: search, category, tag, and time range narrow the same
-board together. Drag cards to arrange them (the layout is saved on the server, so
-it is the same on any device), drop one card onto another to stack them into a
-labeled pile, and add a note with the + button or a double-click on the board.
+board together. You can also click a `#tag` or `@category` on any card to filter
+to it. Drag cards to arrange them (the layout is saved on the server, so it is the
+same on any device), drop one card onto another to stack them into a labeled pile,
+and add a note with the + button or a double-click on the board.
+
+**Settings** (the gear icon, top right) let you pick a theme (System / Light /
+Dark), set the board's default sort, and assign a color to any tag or category,
+which then tints that tag on cards. Settings are saved on the server.
 
 The web UI never edits a note's text; the raw note is kept exactly as you sent it.
 Deleting a card (the x on it) removes that note. Automatic topics from
