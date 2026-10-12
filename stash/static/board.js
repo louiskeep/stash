@@ -396,6 +396,96 @@
     openComposer(e.clientX - r.left + this.scrollLeft, e.clientY - r.top + this.scrollTop);
   });
 
+  // --- saved boards ------------------------------------------------------
+  // A saved board is a named filter set. "Save current" stores the active
+  // filters; clicking a saved board re-applies them. One shared canvas layout.
+  var boardsList = document.getElementById("boardsList");
+  var boardsEmpty = document.getElementById("boardsEmpty");
+  var savedBoards = [];
+  var activeBoardId = null;
+
+  function currentConfig() {
+    return {
+      category: state.cat, tag: state.tag,
+      from: fromInput.value || null, to: toInput.value || null,
+      search: searchInput.value || "", order: state.order
+    };
+  }
+  function applyConfig(cfg) {
+    cfg = cfg || {};
+    // Topic selects: set state + control together.
+    state.cat = cfg.category || null; catSel.value = state.cat || "";
+    state.tag = cfg.tag || null; tagSel.value = state.tag || "";
+    state.order = cfg.order || "newest"; document.getElementById("order").value = state.order;
+    fromInput.value = cfg.from || ""; state.from = parseFrom(fromInput.value);
+    toInput.value = cfg.to || ""; state.to = parseTo(toInput.value);
+    searchInput.value = cfg.search || "";
+    // Search is async; set it then re-filter when it returns (or clear).
+    if (searchInput.value.trim()) runSearch(searchInput.value);
+    else { state.searchIds = null; buildBoard(); applyFilter(); }
+  }
+
+  function renderBoards() {
+    boardsList.innerHTML = "";
+    boardsEmpty.hidden = savedBoards.length !== 0;
+    savedBoards.forEach(function (b) {
+      var li = document.createElement("li"); li.className = "board-row";
+      var open = document.createElement("button");
+      open.className = "open" + (b.id === activeBoardId ? " on" : "");
+      open.type = "button"; open.textContent = b.name;
+      open.addEventListener("click", function () { activeBoardId = b.id; applyConfig(b.config); renderBoards(); });
+      var rm = document.createElement("button");
+      rm.className = "rm"; rm.type = "button"; rm.title = "Delete board"; rm.textContent = "×";
+      rm.addEventListener("click", function (e) { e.stopPropagation(); deleteBoard(b.id); });
+      li.appendChild(open); li.appendChild(rm);
+      boardsList.appendChild(li);
+    });
+  }
+  function loadBoards() {
+    return fetch("/board/boards", { headers: { "X-CSRF-Token": CSRF } })
+      .then(function (r) { return r.json(); })
+      .then(function (data) { savedBoards = data.boards || []; renderBoards(); })
+      .catch(function () {});
+  }
+  function deleteBoard(id) {
+    api("/board/boards/delete", { id: id }).then(function (r) {
+      if (!r.ok) throw 0;
+      savedBoards = savedBoards.filter(function (b) { return b.id !== id; });
+      if (activeBoardId === id) activeBoardId = null;
+      renderBoards();
+    }).catch(function () { toast("Could not delete board"); });
+  }
+
+  // "Save current": an inline name input (window.prompt is inert in some hosts).
+  var saveBtn = document.getElementById("saveBoardBtn");
+  saveBtn.addEventListener("click", function () {
+    if (document.getElementById("boardNameInput")) return;
+    var input = document.createElement("input");
+    input.id = "boardNameInput"; input.className = "board-name-input";
+    input.placeholder = "Board name, then Enter";
+    saveBtn.insertAdjacentElement("afterend", input); input.focus();
+    function done(commit) {
+      var name = input.value.trim(); input.remove();
+      if (commit && name) {
+        api("/board/boards", { name: name, config: currentConfig() }).then(function (r) {
+          if (!r.ok) throw 0; return r.json();
+        }).then(function (res) {
+          activeBoardId = res.id; return loadBoards();
+        }).catch(function () { toast("Could not save board"); });
+      }
+    }
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") done(true);
+      if (e.key === "Escape") done(false);
+    });
+    input.addEventListener("blur", function () { done(true); });
+  });
+
+  // Changing any filter detaches the active-board highlight (the view no longer
+  // matches a saved board exactly).
+  [searchInput, catSel, tagSel, document.getElementById("order"), fromInput, toInput]
+    .forEach(function (el) { el.addEventListener("input", function () { if (activeBoardId) { activeBoardId = null; renderBoards(); } }); });
+
   // --- load + boot -------------------------------------------------------
   function reload() {
     return fetch("/board/notes", { headers: { "X-CSRF-Token": CSRF } })
@@ -408,6 +498,7 @@
   }
 
   reload().catch(function () { hint.textContent = "Could not load your notes."; hint.hidden = false; });
+  loadBoards();
 
   setInterval(function () {
     if (!muuri) return;
