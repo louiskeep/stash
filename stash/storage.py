@@ -477,6 +477,31 @@ class Storage:
             cur = self.conn.execute("DELETE FROM notes WHERE id=?", (note_id,))
             return cur.rowcount == 1
 
+    # --- saved boards (W6): named filter sets --------------------------------
+    # Durable state like board_layout; a reindex never touches it. `config` is a
+    # JSON string stored and returned as-is; the server does not interpret it.
+
+    def list_boards(self) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT id, name, config FROM boards"
+            " ORDER BY position IS NULL, position, id"
+        ).fetchall()
+
+    def save_board(self, name, config_json) -> int:
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        with self.conn:
+            cur = self.conn.execute(
+                "INSERT INTO boards(name, config, created_at) VALUES (?,?,?)",
+                (name, config_json, now),
+            )
+            return cur.lastrowid
+
+    def delete_board(self, board_id) -> bool:
+        with self.conn:
+            cur = self.conn.execute("DELETE FROM boards WHERE id=?", (board_id,))
+            return cur.rowcount == 1
+
     def claim_one_due_reminder(self, now, lease_seconds, max_attempts, allowed_ids):
         # Claim exactly one reminder per call: pending, due, under the
         # attempt cap, and either never claimed or its lease has expired.

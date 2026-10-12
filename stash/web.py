@@ -276,6 +276,53 @@ async def board_delete(request: Request) -> Response:
     return JSONResponse({"ok": True, "deleted": deleted})
 
 
+_BOARD_NAME_MAX = 80
+
+
+async def board_boards_list(request: Request) -> Response:
+    rows = request.app.state.storage.list_boards()
+    import json
+    out = []
+    for r in rows:
+        try:
+            cfg = json.loads(r["config"])
+        except Exception:
+            cfg = {}
+        out.append({"id": r["id"], "name": r["name"], "config": cfg})
+    return JSONResponse({"boards": out})
+
+
+async def board_boards_save(request: Request) -> Response:
+    _require_csrf(request, "")
+    body = await _json_body(request)
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="invalid body")
+    name = body.get("name")
+    config = body.get("config")
+    if not isinstance(name, str) or not name.strip():
+        raise HTTPException(status_code=400, detail="board name required")
+    if len(name) > _BOARD_NAME_MAX:
+        raise HTTPException(status_code=400, detail="board name too long")
+    if not isinstance(config, dict):
+        raise HTTPException(status_code=400, detail="config must be an object")
+    import json
+    board_id = request.app.state.storage.save_board(name.strip(), json.dumps(config))
+    return JSONResponse({"ok": True, "id": board_id})
+
+
+async def board_boards_delete(request: Request) -> Response:
+    _require_csrf(request, "")
+    body = await _json_body(request)
+    try:
+        board_id = int(body.get("id")) if isinstance(body, dict) else None
+    except (TypeError, ValueError):
+        board_id = None
+    if board_id is None:
+        raise HTTPException(status_code=400, detail="id required")
+    deleted = request.app.state.storage.delete_board(board_id)
+    return JSONResponse({"ok": True, "deleted": deleted})
+
+
 # --- factory ---------------------------------------------------------------
 
 def _validate_web_config(config) -> None:
@@ -308,6 +355,9 @@ def build_app(storage, embedder, config) -> Starlette:
         Route("/board/piles", board_piles, methods=["POST"]),
         Route("/board/add", board_add, methods=["POST"]),
         Route("/board/delete", board_delete, methods=["POST"]),
+        Route("/board/boards", board_boards_list, methods=["GET"]),
+        Route("/board/boards", board_boards_save, methods=["POST"]),
+        Route("/board/boards/delete", board_boards_delete, methods=["POST"]),
         Mount("/static", StaticFiles(directory=_STATIC_DIR), name="static"),
     ]
     app = Starlette(routes=routes)

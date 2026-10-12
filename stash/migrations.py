@@ -89,4 +89,16 @@ MIGRATIONS: list[tuple[int, str]] = [
     );
     CREATE INDEX IF NOT EXISTS ix_board_layout_pile ON board_layout(pile_id);
     """),
+    (3, """
+    -- Saved boards: named filter sets the user configures and recalls. Durable
+    -- state, NOT derived -- a reindex never touches it. `config` is a JSON string
+    -- of the filter set (category, tag, from, to, search, order).
+    CREATE TABLE IF NOT EXISTS boards (
+        id         INTEGER PRIMARY KEY,
+        name       TEXT NOT NULL,
+        config     TEXT NOT NULL,
+        position   INTEGER,
+        created_at TEXT
+    );
+    """),
 ]
