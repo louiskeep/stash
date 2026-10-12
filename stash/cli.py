@@ -29,6 +29,10 @@ def main(argv=None, storage=None, embedder=None) -> int:
     sub.add_parser("repair")
     sub.add_parser("tags")  # deterministic Topics: tag -> count
     sub.add_parser("serve")  # Telegram poller + reminder scheduler daemon
+    p_backup = sub.add_parser("backup")  # consistent online backup (VACUUM INTO)
+    p_backup.add_argument("dest")
+    p_backup.add_argument("--force", action="store_true",
+                          help="overwrite dest if it already exists")
     args = parser.parse_args(argv)
 
     load_dotenv(".env")
@@ -40,6 +44,23 @@ def main(argv=None, storage=None, embedder=None) -> int:
         except RuntimeError as e:
             print(e, file=sys.stderr)
             return 1
+        return 0
+
+    if args.cmd == "backup":
+        # Back up the database exactly as it is now: no startup repair, no embed
+        # model load, no reindex. Backup is a pure read of the current file, so
+        # it must not mutate state or depend on the model being present.
+        from stash.backup import backup as do_backup
+        bstorage = storage
+        if bstorage is None:
+            bcfg = load_config(os.environ)
+            bstorage = Storage.open(bcfg.db_path, bcfg.busy_timeout_ms)
+        try:
+            dest = do_backup(bstorage, args.dest, force=args.force)
+        except FileExistsError as e:
+            print(e, file=sys.stderr)
+            return 1
+        print(f"backed up to {dest}")
         return 0
 
     cfg = load_config(os.environ) if storage is None or embedder is None else None
