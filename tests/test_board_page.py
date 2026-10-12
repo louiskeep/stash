@@ -17,12 +17,13 @@ async def test_board_page_renders_when_authed(client):
     # Muuri is vendored locally, never loaded from a CDN at runtime.
     assert "/static/muuri.min.js" in r.text
     assert "cdnjs" not in r.text and "unpkg" not in r.text
-    # The board carries its own controls: search, topic, order, time range, rail.
-    assert 'id="search"' in r.text and 'id="topic"' in r.text
+    # The board carries its own controls: search, category + tag, order, dates,
+    # the reminders dropdown, and the saved-boards column.
+    assert 'id="search"' in r.text and 'id="category"' in r.text and 'id="tag"' in r.text
     assert 'id="order"' in r.text and 'id="from"' in r.text and 'id="to"' in r.text
-    assert 'id="rail"' in r.text
-    # No links to the removed pages.
-    assert "/timeline" not in r.text and "/reminders" not in r.text
+    assert 'id="remindersBtn"' in r.text and 'id="boardsList"' in r.text
+    # No links to the removed pages, and no old combined topic/rail markup.
+    assert "/timeline" not in r.text and 'id="topic"' not in r.text and 'id="rail"' not in r.text
 
 
 async def test_board_static_assets_served(client):

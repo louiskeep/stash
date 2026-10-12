@@ -464,7 +464,10 @@
     input.id = "boardNameInput"; input.className = "board-name-input";
     input.placeholder = "Board name, then Enter";
     saveBtn.insertAdjacentElement("afterend", input); input.focus();
+    var finished = false;
     function done(commit) {
+      if (finished) return;      // Enter removes the input, which fires blur ->
+      finished = true;           // done() again; guard against a double submit.
       var name = input.value.trim(); input.remove();
       if (commit && name) {
         api("/board/boards", { name: name, config: currentConfig() }).then(function (r) {
@@ -482,9 +485,12 @@
   });
 
   // Changing any filter detaches the active-board highlight (the view no longer
-  // matches a saved board exactly).
+  // matches a saved board exactly). Bind both input and change: the search box
+  // fires input, while selects and date inputs fire change, so covering both
+  // keeps the highlight honest on every control and every browser engine.
+  function detachActive() { if (activeBoardId) { activeBoardId = null; renderBoards(); } }
   [searchInput, catSel, tagSel, document.getElementById("order"), fromInput, toInput]
-    .forEach(function (el) { el.addEventListener("input", function () { if (activeBoardId) { activeBoardId = null; renderBoards(); } }); });
+    .forEach(function (el) { el.addEventListener("input", detachActive); el.addEventListener("change", detachActive); });
 
   // --- load + boot -------------------------------------------------------
   function reload() {
