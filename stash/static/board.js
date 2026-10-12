@@ -638,7 +638,10 @@
   }
 
   // Load settings first (theme + colors ready before cards build), then notes.
+  // Settings are presentation only, so a settings failure must never block the
+  // notes load: swallow it before chaining reload.
   loadSettings()
+    .catch(function () {})
     .then(reload)
     .catch(function () { hint.textContent = "Could not load your notes."; hint.hidden = false; });
   loadBoards();

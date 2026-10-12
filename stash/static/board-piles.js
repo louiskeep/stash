@@ -181,9 +181,15 @@
   }
 
   // Collapsed piles toggle open on a click of the top card (not a drag).
+  // Exclude the action controls on the card: the delete button, the pile label,
+  // and the clickable tag/category chips (which filter). This runs in the
+  // capture phase on #grid, so the chip's own bubble-phase stopPropagation can't
+  // cancel it; the guard here is what keeps a chip click from also toggling the
+  // pile.
   function onTopClick(e) {
     var itemEl = e.target.closest(".item.pile");
-    if (!itemEl || e.target.closest(".del") || e.target.closest(".pile-label")) return;
+    if (!itemEl || e.target.closest(".del") || e.target.closest(".pile-label")
+        || e.target.closest(".chipbtn")) return;
     var id = +itemEl.dataset.id;
     var p = pileOf(id); if (!p) return;
     p.collapsed = !p.collapsed; save();
