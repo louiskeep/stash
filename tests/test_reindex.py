@@ -74,3 +74,13 @@ def test_reindex_clears_clusters(tmp_path):
     ).fetchone()["n"] == 0
     # The note itself survived the reindex.
     assert s.get_note(nid)["raw"] == "a note #x"
+
+
+def test_reindex_preserves_board_layout(tmp_path):
+    # Board layout is durable state; reindex must not touch it.
+    s = Storage.open(str(tmp_path / "board.db"))
+    nid = capture(s, FakeEmbedder(), "a note", "web", _now()).note_id
+    s.save_positions([{"note_id": nid, "x": 7.0, "y": 8.0, "z": 3}])
+    reindex(s, FakeEmbedder())
+    note = next(n for n in s.board_notes() if n["id"] == nid)
+    assert note["x"] == 7.0 and note["y"] == 8.0 and note["z"] == 3

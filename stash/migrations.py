@@ -67,4 +67,26 @@ MIGRATIONS: list[tuple[int, str]] = [
         embedding FLOAT[384]
     );
     """),
+    (2, """
+    -- Board layout: the user's spatial arrangement of notes. Durable state,
+    -- NOT derived -- a reindex never touches it. A deleted note cascades its
+    -- layout row away; a deleted pile detaches its members (SET NULL) rather
+    -- than deleting the notes.
+    CREATE TABLE IF NOT EXISTS board_piles (
+        id         INTEGER PRIMARY KEY,
+        label      TEXT,
+        collapsed  INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS board_layout (
+        note_id    INTEGER PRIMARY KEY REFERENCES notes(id) ON DELETE CASCADE,
+        x          REAL,
+        y          REAL,
+        z          INTEGER NOT NULL DEFAULT 0,
+        pile_id    INTEGER REFERENCES board_piles(id) ON DELETE SET NULL,
+        updated_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS ix_board_layout_pile ON board_layout(pile_id);
+    """),
 ]

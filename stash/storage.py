@@ -344,6 +344,135 @@ class Storage:
             "SELECT label FROM clusters WHERE id = ?", (cluster_id,)).fetchone()
         return r["label"] if r else None
 
+    # --- board (W4): the user's spatial note arrangement -------------------
+    # board_layout and board_piles are durable state (reindex leaves them),
+    # written by the user dragging and stacking notes on the canvas.
+
+    def board_notes(self) -> list[dict]:
+        """Every note with the fields the canvas needs: raw, created_at, source,
+        its tags and category, a pending reminder's fire_at (the timer), and its
+        saved board position (x/y/z/pile) when it has one. Returns plain dicts so
+        the JSON endpoint can serialize them directly; note text is a data value,
+        never interpolated into HTML."""
+        notes = self.conn.execute(
+            "SELECT n.id, n.raw, n.source, n.created_at,"
+            "       m.category,"
+            "       b.x, b.y, b.z, b.pile_id,"
+            "       r.fire_at AS timer, r.status AS timer_status"
+            " FROM notes n"
+            " LEFT JOIN note_meta m ON m.note_id = n.id"
+            " LEFT JOIN board_layout b ON b.note_id = n.id"
+            " LEFT JOIN reminders r ON r.note_id = n.id AND r.status = 'pending'"
+            " ORDER BY n.id DESC"
+        ).fetchall()
+        tags_by_note: dict[int, list[str]] = {}
+        for row in self.conn.execute("SELECT note_id, tag FROM note_tags ORDER BY tag"):
+            tags_by_note.setdefault(row["note_id"], []).append(row["tag"])
+        out = []
+        for n in notes:
+            out.append({
+                "id": n["id"],
+                "raw": n["raw"],
+                "source": n["source"],
+                "created_at": n["created_at"],
+                "category": n["category"],
+                "tags": tags_by_note.get(n["id"], []),
+                "timer": n["timer"] if n["timer_status"] == "pending" else None,
+                "x": n["x"], "y": n["y"], "z": n["z"] if n["z"] is not None else 0,
+                "pile_id": n["pile_id"],
+            })
+        return out
+
+    def board_piles(self) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT id, label, collapsed FROM board_piles ORDER BY id"
+        ).fetchall()
+
+    def save_positions(self, positions) -> int:
+        """Upsert board positions. `positions` is an iterable of mappings with
+        note_id and x/y/z (and optional pile_id). A position for a note that does
+        not exist is ignored (the FK insert fails) rather than raising. Returns
+        the count actually written."""
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        written = 0
+        with self.conn:
+            for p in positions:
+                try:
+                    nid = int(p["note_id"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if self.get_note(nid) is None:
+                    continue  # unknown note id: ignore, do not error
+                self.conn.execute(
+                    "INSERT INTO board_layout(note_id, x, y, z, pile_id, updated_at)"
+                    " VALUES (?,?,?,?,?,?)"
+                    " ON CONFLICT(note_id) DO UPDATE SET"
+                    " x=excluded.x, y=excluded.y, z=excluded.z,"
+                    " pile_id=excluded.pile_id, updated_at=excluded.updated_at",
+                    (nid, p.get("x"), p.get("y"), p.get("z", 0),
+                     p.get("pile_id"), now),
+                )
+                written += 1
+        return written
+
+    def save_piles(self, piles, assignments) -> dict:
+        """Replace the pile set and reassign notes.
+
+        `piles` is a list of {client_id, label, collapsed}; `assignments` maps
+        note_id to a client_id (or None to unpile). Rebuilds board_piles and sets
+        board_layout.pile_id accordingly, in one transaction. Returns a map from
+        each client_id to the new database pile id."""
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        client_to_id: dict = {}
+        with self.conn:
+            # Detach all notes, then rebuild piles, then reassign. Deleting a
+            # pile SET NULLs its members via FK, but we clear explicitly so a
+            # removed pile leaves no dangling reference even mid-rebuild.
+            self.conn.execute("UPDATE board_layout SET pile_id = NULL")
+            self.conn.execute("DELETE FROM board_piles")
+            for p in piles:
+                cur = self.conn.execute(
+                    "INSERT INTO board_piles(label, collapsed, updated_at) VALUES (?,?,?)",
+                    (p.get("label") or "", 1 if p.get("collapsed") else 0, now),
+                )
+                client_to_id[p.get("client_id")] = cur.lastrowid
+            for note_id, client_id in assignments.items():
+                pid = client_to_id.get(client_id)
+                try:
+                    nid = int(note_id)
+                except (TypeError, ValueError):
+                    continue
+                if pid is None or self.get_note(nid) is None:
+                    continue
+                self.conn.execute(
+                    "INSERT INTO board_layout(note_id, pile_id, updated_at)"
+                    " VALUES (?,?,?)"
+                    " ON CONFLICT(note_id) DO UPDATE SET"
+                    " pile_id=excluded.pile_id, updated_at=excluded.updated_at",
+                    (nid, pid, now),
+                )
+        return client_to_id
+
+    def delete_note(self, note_id) -> bool:
+        """Delete a note and everything derived or attached to it (tags, meta,
+        fts, vec, reminder, board layout) via FK cascade and explicit cleanup for
+        the vec/fts virtual tables, which do not honor FKs. The one destructive
+        board action, and only when the user asks for it. Returns whether a row
+        was deleted."""
+        with self.conn:
+            # Virtual tables (fts5 external-content, vec0) are not covered by FK
+            # cascade; remove their rows explicitly first.
+            indexed = self.conn.execute(
+                "SELECT 1 FROM notes_fts_docsize WHERE id=?", (note_id,)
+            ).fetchone()
+            if indexed:
+                self.conn.execute("DELETE FROM notes_fts WHERE rowid=?", (note_id,))
+            self.conn.execute("DELETE FROM vec_notes WHERE note_id=?", (note_id,))
+            cur = self.conn.execute("DELETE FROM notes WHERE id=?", (note_id,))
+            return cur.rowcount == 1
+
     def claim_one_due_reminder(self, now, lease_seconds, max_attempts, allowed_ids):
         # Claim exactly one reminder per call: pending, due, under the
         # attempt cap, and either never claimed or its lease has expired.
