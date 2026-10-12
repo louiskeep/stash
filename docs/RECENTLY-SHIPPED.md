@@ -3,6 +3,54 @@
 Dated log of merged/merge-ready slices with gate evidence. The roadmap points
 here instead of restating history.
 
+## 2026-10-12: W4: The Board (home surface)
+
+Branch `feat/w4-board` (off `feat/m3-w2-clustering`). The web UI's home is now a
+canvas of the user's notes as draggable paper cards: arrange them freely (the
+layout persists server-side, so the board is the same on any device), drop one
+card onto another to stack them into a labeled pile, filter by time order / a tag
+or category / active timers, and add a note with + or a double-click. Search,
+Timeline, Topics, and Reminders remain in the nav. The raw note stays sacred: the
+board writes only layout and pile state, plus the one explicit delete the user
+initiates.
+
+What shipped: migration 2 (board_layout, board_piles) as durable state (reindex
+leaves it; a deleted note cascades its layout, a deleted pile detaches members);
+storage board_notes / save_positions / save_piles / delete_note; a JSON notes
+endpoint and CSRF-protected positions/piles/add/delete routes; the canvas
+(board.html/css/js) with a custom Muuri layout that restores saved positions, and
+a stacking-piles module; /board as the home and post-login landing, with Search
+moved to /search and its fragment to /search/results.
+
+Gate evidence:
+- 6 tasks, plan on disk at
+  `docs/superpowers/plans/2026-10-12-stash-m3-w4-board.md`, acceptance tests per
+  task before implementation (R2).
+- Independent cold review: 0 Critical (no auth bypass, no CSRF gap, no XSS sink,
+  SQL sound; CSRF genuinely session-bound; delete behind auth+CSRF with a correct
+  fts/vec cleanup; save_piles atomic). Two HIGH root-fixed: saved positions were
+  never re-applied on load (the arrangement did not actually persist) - fixed
+  with a custom Muuri layout that restores x/y/z; and a position save nulled
+  pile_id on every drag - fixed by making save_positions touch only x/y/z and
+  giving the piles module the single release handler. Two MEDIUM fixed: Muuri was
+  loaded from a CDN at runtime (offline break + third-party-script-in-session
+  risk) - now vendored at /static/muuri.min.js only; and added bad-CSRF 403 tests
+  for the destructive /board/delete and the other POSTs.
+- The board reads the same storage the text pages do, so it cannot drift from the
+  real notes.
+
+Verification note: no sqlite-vec or browser in the build environment, so
+storage-backed reads use a fake storage in tests and the live drag / drop-to-stack
+/ persistence round-trip is confirmed by the user in a browser. The route / auth /
+CSRF / JSON-shape / escaping / pile-preservation logic was verified in-session via
+ASGITransport and fake storages; both board JS files pass node --check. Before
+merge, run the pytest suite with sqlite-vec installed and vendor Muuri (one curl,
+see static/README.md).
+
+Not in W4 (by design): named/multiple boards, real-time multi-viewer sync, and
+any change to capture, recall, reminders, Telegram, or clustering beyond the
+board's read/layout endpoints.
+
 ## 2026-10-12: Milestone 3 / W2: Clustering (completes the MVP)
 
 Branch `feat/m3-w2-clustering` (off `feat/m3-w3-packaging`). Topic discovery:
