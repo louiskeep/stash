@@ -42,23 +42,25 @@ still runs. Open:
 http://127.0.0.1:8000
 ```
 
-Log in with your password. You land on the **Board** - a canvas of your notes as
-draggable paper cards. Drag to arrange them (the layout is saved on the server,
-so it is the same on any device), drop one card onto another to stack them into a
-labeled pile, filter by time order, a tag or category, or active timers, and add
-a note with the + button or a double-click on the board. The nav also has:
+Log in with your password. The whole web UI is one screen: the **Board**, a
+canvas of your notes as draggable paper cards. Everything else is a control on it:
 
-- **Search** - hybrid keyword + meaning search, with a box to stash a new note.
-- **Timeline** - everything you have stashed, newest first.
-- **Topics** - your `#tags` and `@categories`, each drilling into its notes, plus
-  automatically discovered topics once you run `stash recluster` (see
-  `docs/guides/clustering.md`).
-- **Note** - a note's verbatim text, its tags and category, any reminder, and
-  related notes found by meaning.
-- **Reminders** - what is pending, sent, or failed.
+- **Search** (top bar) - type to narrow the board to matching notes, by keyword
+  and by meaning.
+- **Topic** - a dropdown to show only one `#tag` or `@category`.
+- **Order** and **From / To** - sort by time and narrow to a date range.
+- **Reminders** (left rail) - your active timers as live countdowns; click one to
+  jump to its note on the board.
 
-The web UI never edits or deletes a note's text; the raw note is kept exactly as
-you sent it.
+All the filters stack: search, topic, and time range narrow the same board
+together. Drag cards to arrange them (the layout is saved on the server, so it is
+the same on any device), drop one card onto another to stack them into a labeled
+pile, and add a note with the + button or a double-click on the board.
+
+The web UI never edits a note's text; the raw note is kept exactly as you sent it.
+Deleting a card (the x on it) removes that note. Automatic topics from
+`stash recluster` (see `docs/guides/clustering.md`) feed the tag/category data the
+Topic dropdown shows.
 
 ## Changing the port or address
 
