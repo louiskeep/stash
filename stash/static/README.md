@@ -11,11 +11,22 @@ CDN at runtime: stash does all processing and storage locally, and loading
 third-party script into the authenticated session from a CDN would be both an
 offline break and a security risk. So Muuri is vendored here.
 
-Fetch it once (version 0.9.5):
+Fetch it once (version 0.9.5).
+
+macOS / Linux:
 
 ```bash
 curl -L -o stash/static/muuri.min.js \
   https://cdnjs.cloudflare.com/ajax/libs/muuri/0.9.5/muuri.min.js
+```
+
+Windows PowerShell (its `curl` is an alias for Invoke-WebRequest and does not
+take `-L -o`, so use one of these):
+
+```powershell
+Invoke-WebRequest -Uri https://cdnjs.cloudflare.com/ajax/libs/muuri/0.9.5/muuri.min.js -OutFile stash/static/muuri.min.js
+# or, to use the real curl that ships with Windows 10+:
+curl.exe -L -o stash/static/muuri.min.js https://cdnjs.cloudflare.com/ajax/libs/muuri/0.9.5/muuri.min.js
 ```
 
 Until this file exists, the board page shows a message asking you to run that

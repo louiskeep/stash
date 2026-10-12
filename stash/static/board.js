@@ -24,8 +24,8 @@
   // Muuri is vendored at /static/muuri.min.js (never a runtime CDN). If it is
   // missing, say so clearly instead of failing silently.
   if (typeof Muuri === "undefined") {
-    hint.textContent = "The board needs its drag library. Run: curl -L -o " +
-      "stash/static/muuri.min.js https://cdnjs.cloudflare.com/ajax/libs/muuri/0.9.5/muuri.min.js";
+    hint.textContent = "The board needs its drag library. Download Muuri 0.9.5 "
+      + "to stash/static/muuri.min.js (see stash/static/README.md), then reload.";
     hint.hidden = false;
     return;
   }
