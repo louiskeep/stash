@@ -255,8 +255,20 @@ async def topics_page(request: Request) -> Response:
     storage = request.app.state.storage
     return _render(request, "topics.html",
                    {"active": "topics",
+                    "clusters": storage.cluster_topics(),
                     "tags": storage.tag_counts(),
                     "categories": storage.category_counts()})
+
+
+async def topic_cluster(request: Request) -> Response:
+    storage = request.app.state.storage
+    cluster_id = request.path_params["cluster_id"]
+    label = storage.cluster_label(cluster_id)
+    if label is None:
+        raise HTTPException(status_code=404, detail="no such topic")
+    notes = storage.notes_by_cluster(cluster_id, _TOPIC_LIMIT)
+    return _render(request, "topic_list.html",
+                   {"active": "topics", "label": label, "notes": notes})
 
 
 async def topic_tag(request: Request) -> Response:
@@ -323,6 +335,7 @@ def build_app(storage, embedder, config) -> Starlette:
         Route("/topics", topics_page, methods=["GET"]),
         Route("/topics/tag/{tag}", topic_tag, methods=["GET"]),
         Route("/topics/category/{cat}", topic_category, methods=["GET"]),
+        Route("/topics/cluster/{cluster_id:int}", topic_cluster, methods=["GET"]),
         Route("/note/{note_id:int}", note_detail, methods=["GET"]),
         Route("/reminders", reminders_page, methods=["GET"]),
         Mount("/static", StaticFiles(directory=_STATIC_DIR), name="static"),

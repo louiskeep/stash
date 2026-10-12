@@ -2,9 +2,22 @@
 {% block title %}Topics · stash{% endblock %}
 {% block content %}
 <h1 class="page">Topics</h1>
-{% if not tags and not categories %}
-  <p class="empty">No tags or categories yet. Add <span class="code">#tags</span> or
-  <span class="code">@category</span> to a note and they will group here.</p>
+{% if not clusters and not tags and not categories %}
+  <p class="empty">No topics yet. Add <span class="code">#tags</span> or
+  <span class="code">@category</span> to a note and they will group here. Once you
+  have a corpus, <span class="code">stash recluster</span> discovers topics
+  automatically.</p>
+{% endif %}
+
+{% if clusters %}
+<section class="group">
+  <h2 class="sub">Discovered topics</h2>
+  <ul class="chips">
+    {% for cl in clusters %}
+    <li><a href="/topics/cluster/{{ cl.id }}">{{ cl.label }} <span class="n">{{ cl.size }}</span></a></li>
+    {% endfor %}
+  </ul>
+</section>
 {% endif %}
 
 {% if tags %}
