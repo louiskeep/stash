@@ -32,12 +32,14 @@ uv run stash add "a thought to stash"      # capture from the CLI
 uv run stash search "half-remembered"      # recall from the CLI
 uv run stash serve                          # Telegram poller + reminders + web UI
 uv run stash backup stash-backup.db         # consistent online backup
+uv sync --extra cluster && uv run stash recluster   # discover topics (optional)
 ```
 (`python -m stash ...` is the no-install equivalent of `uv run stash ...`.)
 
 The web UI turns on once `STASH_WEB_PASSWORD` and `STASH_WEB_SESSION_SECRET` are
 set; open http://127.0.0.1:8000. Guides: `docs/guides/web-setup.md`,
-`docs/guides/telegram-setup.md`, `docs/guides/docker.md` (one-container install).
+`docs/guides/telegram-setup.md`, `docs/guides/docker.md` (one-container install),
+`docs/guides/clustering.md` (automatic topics).
 
 ## Dev
 ```

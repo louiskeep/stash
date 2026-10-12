@@ -46,7 +46,9 @@ Log in with your password. You get:
 
 - **Search** - hybrid keyword + meaning search, with a box to stash a new note.
 - **Timeline** - everything you have stashed, newest first.
-- **Topics** - your `#tags` and `@categories`, each drilling into its notes.
+- **Topics** - your `#tags` and `@categories`, each drilling into its notes, plus
+  automatically discovered topics once you run `stash recluster` (see
+  `docs/guides/clustering.md`).
 - **Note** - a note's verbatim text, its tags and category, any reminder, and
   related notes found by meaning.
 - **Reminders** - what is pending, sent, or failed.
