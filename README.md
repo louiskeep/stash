@@ -39,8 +39,9 @@ uv sync --extra cluster && uv run stash recluster   # discover topics (optional)
 The web UI turns on once `STASH_WEB_PASSWORD` and `STASH_WEB_SESSION_SECRET` are
 set; open http://127.0.0.1:8000. The whole UI is one screen, the Board: a canvas
 of your notes as draggable cards you arrange and stack into piles, with search in
-the top bar, a topic dropdown and a time range as filters, and active reminders
-as a left rail. Guides: `docs/guides/web-setup.md`,
+the top bar, category/tag/date filters, saved boards (named filter sets) down the
+left, and a Reminders button with active countdowns. Guides:
+`docs/guides/web-setup.md`,
 `docs/guides/telegram-setup.md`, `docs/guides/docker.md` (one-container install),
 `docs/guides/clustering.md` (automatic topics).
 

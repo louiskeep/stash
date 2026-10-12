@@ -7,9 +7,10 @@ routes not yet imagined here too; this test pins the current table explicitly.
 
 import pytest
 
-GET_ROUTES = ["/", "/board/notes", "/board/search?q=milk"]
+GET_ROUTES = ["/", "/board/notes", "/board/search?q=milk", "/board/boards"]
 POST_ROUTES = ["/logout", "/board/positions", "/board/piles",
-               "/board/add", "/board/delete"]
+               "/board/add", "/board/delete", "/board/boards",
+               "/board/boards/delete"]
 OPEN_ROUTES = ["/healthz", "/login", "/static/board.css"]
 # W5 removed these pages entirely; authed, they 404 (gone, not merely guarded).
 REMOVED_ROUTES = ["/search", "/search/results", "/timeline", "/topics",

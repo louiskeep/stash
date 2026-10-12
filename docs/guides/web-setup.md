@@ -47,15 +47,21 @@ canvas of your notes as draggable paper cards. Everything else is a control on i
 
 - **Search** (top bar) - type to narrow the board to matching notes, by keyword
   and by meaning.
-- **Topic** - a dropdown to show only one `#tag` or `@category`.
-- **Order** and **From / To** - sort by time and narrow to a date range.
-- **Reminders** (left rail) - your active timers as live countdowns; click one to
-  jump to its note on the board.
+- **Category** and **Tag** - two dropdowns to show only one `@category` or one
+  `#tag` (or both at once).
+- **Order** and **From / To** - sort by time and narrow to a date range (dates
+  only; the To date includes the whole day).
+- **Saved boards** (left column) - set some filters, then "Save current" names
+  that filter set as a board. Your saved boards live down the left; click one to
+  re-apply its filters. A board is filters only, so your one canvas layout stays
+  the same whichever board is active.
+- **Reminders** (top-bar button, left of Sign out) - opens a panel of your active
+  timers as live countdowns; click one to jump to its note.
 
-All the filters stack: search, topic, and time range narrow the same board
-together. Drag cards to arrange them (the layout is saved on the server, so it is
-the same on any device), drop one card onto another to stack them into a labeled
-pile, and add a note with the + button or a double-click on the board.
+All the filters stack: search, category, tag, and time range narrow the same
+board together. Drag cards to arrange them (the layout is saved on the server, so
+it is the same on any device), drop one card onto another to stack them into a
+labeled pile, and add a note with the + button or a double-click on the board.
 
 The web UI never edits a note's text; the raw note is kept exactly as you sent it.
 Deleting a card (the x on it) removes that note. Automatic topics from
