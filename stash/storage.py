@@ -277,8 +277,9 @@ class Storage:
     # cluster_topics() and notes_by_cluster(). All derived: a reindex rebuilds.
 
     def all_embeddings(self) -> list[tuple[int, list[float]]]:
-        """Every (note_id, vector) in vec_notes, newest first for stable input
-        ordering. The float32 blob is unpacked back to a list of floats."""
+        """Every (note_id, vector) in vec_notes, ordered by note_id ascending so
+        the clustering input is deterministic. The float32 blob is unpacked back
+        to a list of floats."""
         rows = self.conn.execute(
             "SELECT note_id, embedding FROM vec_notes ORDER BY note_id"
         ).fetchall()

@@ -64,6 +64,11 @@ def main(argv=None, storage=None, embedder=None) -> int:
         if result.skipped:
             print(f"recluster skipped: {result.reason}")
             return 0
+        if result.n_clusters == 0:
+            print(f"reclustered {result.n_notes} notes: no dense topics found "
+                  f"yet (all {result.n_outliers} are outliers). This is normal "
+                  "on a varied corpus; add more notes and run it again.")
+            return 0
         print(f"reclustered {result.n_notes} notes into {result.n_clusters} "
               f"topics ({result.n_clustered} clustered, {result.n_outliers} "
               f"outliers).")
