@@ -201,9 +201,19 @@ def _web_loop(config, storage, embedder, stop):
         log_level="warning", lifespan="off",
     )
     server = uvicorn.Server(uconfig)
-    # uvicorn would otherwise install SIGINT/SIGTERM handlers that fight the
-    # ones serve() set; serve() owns shutdown, so disable uvicorn's.
-    server.install_signal_handlers = lambda: None
+    # serve() owns shutdown: it installs its own SIGINT/SIGTERM handlers on the
+    # loop and flips the shared stop event. uvicorn's serve() otherwise wraps
+    # itself in capture_signals(), which reassigns those same signals to its own
+    # handle_exit and restores the originals on exit, fighting serve()'s
+    # handlers. Replace it with a no-op context manager so uvicorn never touches
+    # signals; the stop-event watcher below is what tells it to exit.
+    import contextlib
+
+    @contextlib.contextmanager
+    def _no_signals():
+        yield
+
+    server.capture_signals = _no_signals
 
     async def run():
         async def _watch_stop():
