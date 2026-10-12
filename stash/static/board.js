@@ -85,8 +85,18 @@
 
     var foot = document.createElement("div"); foot.className = "foot";
     var time = document.createElement("time"); time.textContent = ago(n.created_at); foot.appendChild(time);
-    if (n.category) { var c = document.createElement("span"); c.className = "c"; c.textContent = "@" + n.category; foot.appendChild(c); }
-    (n.tags || []).forEach(function (t) { var s = document.createElement("span"); s.className = "t"; s.textContent = "#" + t; foot.appendChild(s); });
+    if (n.category) {
+      var c = document.createElement("button"); c.type = "button"; c.className = "c chipbtn";
+      c.textContent = "@" + n.category; applyChipColor(c, "cat:" + n.category);
+      c.addEventListener("click", function (e) { e.stopPropagation(); filterByCategory(n.category); });
+      foot.appendChild(c);
+    }
+    (n.tags || []).forEach(function (t) {
+      var s = document.createElement("button"); s.type = "button"; s.className = "t chipbtn";
+      s.textContent = "#" + t; applyChipColor(s, "tag:" + t);
+      s.addEventListener("click", function (e) { e.stopPropagation(); filterByTag(t); });
+      foot.appendChild(s);
+    });
     if (n.timer) { var tm = document.createElement("span"); tm.className = "timer"; tm.textContent = until(n.timer); foot.appendChild(tm); }
 
     note.appendChild(del); note.appendChild(raw); note.appendChild(foot);
@@ -181,7 +191,9 @@
       layout: customLayout,
       layoutOnResize: 150,
       dragStartPredicate: function (item, e) {
-        if (e.target.closest(".del")) return false;
+        // The delete button and the clickable tag/category chips are actions,
+        // not drag handles.
+        if (e.target.closest(".del") || e.target.closest(".chipbtn")) return false;
         return Muuri.ItemDrag.defaultStartPredicate(item, e, { distance: 4, delay: 0 });
       }
     });
@@ -244,6 +256,27 @@
     });
     fillSelect(catSel, catCount, "@", "cat", false);
     fillSelect(tagSel, tagCount, "#", "tag", true);
+  }
+
+  // Clicking a tag/category on a card filters the board to it and reflects the
+  // choice in the matching dropdown (the existing filter path).
+  function filterByCategory(cat) {
+    state.cat = cat || null; catSel.value = state.cat || "";
+    if (typeof detachActive === "function") detachActive();
+    applyFilter();
+  }
+  function filterByTag(tag) {
+    state.tag = tag || null; tagSel.value = state.tag || "";
+    if (typeof detachActive === "function") detachActive();
+    applyFilter();
+  }
+
+  // Colors (W7 settings) are applied to a tag/category chip here; filled in by
+  // the settings module. Default: no color, chip renders as today.
+  var chipColors = {};  // key "tag:x" / "cat:y" -> "#rrggbb"
+  function applyChipColor(el, key) {
+    var hex = chipColors[key];
+    if (hex) { el.style.color = hex; el.style.borderColor = hex; el.classList.add("colored"); }
   }
 
   // --- reminders dropdown ------------------------------------------------

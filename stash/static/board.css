@@ -140,6 +140,12 @@ body {
   white-space: pre-wrap; word-break: break-word; margin: 0 0 0.5rem; }
 .foot { display: flex; flex-wrap: wrap; gap: 0.3rem 0.5rem; align-items: center; font-size: 0.68rem; color: var(--ink-soft); }
 .foot time { font-variant-numeric: tabular-nums; }
+/* Clickable tag/category chips on a card: subtle, inline, keyboard focusable. */
+.chipbtn { border: none; background: none; font: inherit; font-size: 0.68rem; cursor: pointer;
+  padding: 0; border-radius: 4px; }
+.chipbtn:hover { text-decoration: underline; }
+.chipbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.chipbtn.colored { padding: 0 0.3rem; border: 1px solid; }
 .foot .t { color: var(--accent); } .foot .c { color: var(--warn); }
 .timer { display: inline-flex; align-items: center; gap: 0.25rem; color: var(--warn); font-weight: 600; }
 .timer::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); animation: pulse 1.6s ease-in-out infinite; }
