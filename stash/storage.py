@@ -14,6 +14,11 @@ def _pack_f32(vector: list[float]) -> bytes:
     return struct.pack(f"{len(vector)}f", *vector)
 
 
+def _unpack_f32(blob: bytes) -> list[float]:
+    n = len(blob) // 4
+    return list(struct.unpack(f"{n}f", blob))
+
+
 def _fts5_match_expr(query: str) -> str:
     """Turn free-form user input into a safe FTS5 MATCH expression.
 
@@ -265,6 +270,78 @@ class Storage:
             " ORDER BY r.fire_at DESC LIMIT ?",
             (limit,),
         ).fetchall()
+
+    # --- clustering (W2): derived topic discovery -------------------------
+    # recluster() in stash/cluster.py reads all_embeddings(), computes groups,
+    # and persists them with replace_clusters(). The Topics page reads
+    # cluster_topics() and notes_by_cluster(). All derived: a reindex rebuilds.
+
+    def all_embeddings(self) -> list[tuple[int, list[float]]]:
+        """Every (note_id, vector) in vec_notes, newest first for stable input
+        ordering. The float32 blob is unpacked back to a list of floats."""
+        rows = self.conn.execute(
+            "SELECT note_id, embedding FROM vec_notes ORDER BY note_id"
+        ).fetchall()
+        return [(r["note_id"], _unpack_f32(r["embedding"])) for r in rows]
+
+    def replace_clusters(self, clusters, assignments) -> None:
+        """Atomically replace the whole clustering.
+
+        `clusters` is a list of (label, size) in cluster-index order; the row's
+        1-based rowid becomes its cluster id. `assignments` maps note_id to a
+        cluster index (0-based) or None for an outlier. In one transaction:
+        clear every old cluster and cluster_id, insert the new clusters, and set
+        cluster_id on assigned notes. Touches only `clusters` and
+        `note_meta.cluster_id`; raw notes, reminders, and kv are untouched.
+        """
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        with self.conn:
+            self.conn.execute("DELETE FROM clusters")
+            self.conn.execute("UPDATE note_meta SET cluster_id = NULL")
+            # Insert clusters; capture each new id in index order.
+            index_to_id: dict[int, int] = {}
+            for idx, (label, size) in enumerate(clusters):
+                cur = self.conn.execute(
+                    "INSERT INTO clusters(label, size, updated_at) VALUES (?,?,?)",
+                    (label, size, now),
+                )
+                index_to_id[idx] = cur.lastrowid
+            for note_id, idx in assignments.items():
+                if idx is None:
+                    continue  # outlier: leave cluster_id NULL
+                # note_meta row exists for every derived note; guard anyway so a
+                # not-yet-derived note cannot break the whole recluster.
+                self.conn.execute(
+                    "UPDATE note_meta SET cluster_id = ? WHERE note_id = ?",
+                    (index_to_id[idx], note_id),
+                )
+
+    def clear_clusters(self) -> None:
+        """Drop all clusters and cluster assignments. Used by reindex so no
+        stale cluster rows survive a rebuild (clusters are recomputed by
+        recluster, not reindex)."""
+        with self.conn:
+            self.conn.execute("DELETE FROM clusters")
+            self.conn.execute("UPDATE note_meta SET cluster_id = NULL")
+
+    def cluster_topics(self) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT id, label, size FROM clusters ORDER BY size DESC, id"
+        ).fetchall()
+
+    def notes_by_cluster(self, cluster_id, limit) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT n.* FROM notes n"
+            " JOIN note_meta m ON m.note_id = n.id"
+            " WHERE m.cluster_id = ? ORDER BY n.id DESC LIMIT ?",
+            (cluster_id, limit),
+        ).fetchall()
+
+    def cluster_label(self, cluster_id) -> str | None:
+        r = self.conn.execute(
+            "SELECT label FROM clusters WHERE id = ?", (cluster_id,)).fetchone()
+        return r["label"] if r else None
 
     def claim_one_due_reminder(self, now, lease_seconds, max_attempts, allowed_ids):
         # Claim exactly one reminder per call: pending, due, under the
