@@ -35,9 +35,13 @@ before implementation (R2).
       in the build environment).
 - [ ] **W2: Clustering.** HDBSCAN auto-Topics with TF-IDF/tag labels, outliers
       allowed, once a real corpus justifies it.
-- [ ] **W3: Packaging.** `[project.scripts]` entry so `uv run stash` works
-      (M1/W1 run as `python -m stash`), Dockerfile, online-backup guidance, run
-      docs.
+- [x] **W3: Packaging.** Shipped 2026-10-12 on `feat/m3-w3-packaging` (see
+      `docs/RECENTLY-SHIPPED.md`). `uv run stash` console-script entry point, a
+      `stash backup` VACUUM INTO online backup, a Dockerfile + guide, and
+      consolidated run docs; `serve()` now runs web-only, Telegram-only, or both.
+      Gate: 0 Critical; one HIGH (web-only startup crash) root-fixed. Run the
+      pytest suite and a `docker build` with the toolchain installed before
+      merge.
 
 ## Follow-ups carried from review (next slice)
 

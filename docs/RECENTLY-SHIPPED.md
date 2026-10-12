@@ -3,6 +3,56 @@
 Dated log of merged/merge-ready slices with gate evidence. The roadmap points
 here instead of restating history.
 
+## 2026-10-12: Milestone 3 / W3: Packaging
+
+Branch `feat/m3-w3-packaging` (off `feat/m3-w1-web-ui`). Makes stash installable
+and runnable as one command and one container, with a safe online backup.
+
+What shipped: a hatchling build backend + `[project.scripts] stash =
+"stash.cli:main"` so `uv run stash ...` works (not only `python -m stash`), with
+the web templates/static force-included into the wheel; a `stash backup DEST
+[--force]` subcommand using `VACUUM INTO` for a consistent single-file online
+backup (safe while `stash serve` runs; dispatched before the startup
+repair/reindex so it is a pure read); a Dockerfile (runs `stash serve` off the
+installed venv, model cache and DB on volumes, no secret baked in), a
+`.dockerignore` excluding `.env`/`*.db`/caches, and a docker guide; and
+consolidated run docs.
+
+As part of the review (H1 below), `serve()` was generalized to run with the web
+UI alone, Telegram alone, or both (previously it hard-required Telegram); a
+half-configured Telegram is still rejected, and a web-only start opens no
+Telegram connection.
+
+Gate evidence:
+- 4 tasks, plan on disk at
+  `docs/superpowers/plans/2026-10-12-stash-m3-w3-packaging.md`, acceptance tests
+  per task before implementation (R2).
+- Independent cold review at the gate. 0 Critical. One HIGH root-fixed: the
+  documented one-container web install crashed on startup because `serve()`
+  required Telegram config; fixed so at least one channel suffices and the
+  Telegram client/poller/scheduler are built only when Telegram is configured
+  (verified end-to-end: web-only serve runs, builds no Telegram client, stops on
+  SIGINT). Three MEDIUM fixed: tomllib import guarded for the >=3.10 floor; the
+  wheel-asset invariant pinned with an additive force-include and asserted; the
+  container CMD switched from `uv run` (which re-resolves the lock, can need the
+  network) to the installed console script on PATH.
+- Reviewer confirmed correct: entry-point parity (`stash.cli:main` works as a
+  console script and matches `python -m stash`), backup consistency and
+  non-corruption (VACUUM INTO, source untouched, no repair/reindex side effect),
+  and no secret/DB in the image.
+
+Verification note: as with W1, this build environment had no PyPI/Docker access,
+so `uv run`, `uv build`, and `docker build` could not run here. The backup logic
+(against stdlib sqlite3), the entry-point and packaging declarations (against the
+parsed pyproject), the serve validation and web-only startup, and the Docker
+context rules were verified in-session. `uv run stash ...`, a wheel build, and
+`docker build`/`run` should be exercised in an environment with the toolchain
+before merge.
+
+Not in W3 (by design): HDBSCAN clustering (W2); publishing the image to a
+registry or CI; any core behavior change beyond the entry point, the `backup`
+subcommand, and the web-only `serve()` generalization.
+
 ## 2026-10-12: Milestone 3 / W1: Web UI
 
 Branch `feat/m3-w1-web-ui`. A local, server-rendered web UI over the existing
