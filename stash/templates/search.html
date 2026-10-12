@@ -12,7 +12,7 @@
 <form class="find" role="search">
   <input type="search" name="q" value="{{ q or '' }}" placeholder="Find a note"
          aria-label="Search notes" autocomplete="off"
-         hx-get="/search" hx-target="#results" hx-trigger="input changed delay:200ms, search"
+         hx-get="/search/results" hx-target="#results" hx-trigger="input changed delay:200ms, search"
          hx-indicator="#finding">
   <span id="finding" class="htmx-indicator">searching</span>
 </form>

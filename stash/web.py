@@ -20,7 +20,8 @@ import os
 from starlette.applications import Starlette
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
-from starlette.responses import PlainTextResponse, RedirectResponse, Response
+from starlette.responses import (
+    JSONResponse, PlainTextResponse, RedirectResponse, Response)
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
@@ -305,6 +306,81 @@ async def reminders_page(request: Request) -> Response:
                     "reminders": storage.list_reminders(_REMINDERS_LIMIT)})
 
 
+# --- board -----------------------------------------------------------------
+
+async def board_page(request: Request) -> Response:
+    # The canvas page. It boots by fetching /board/notes; the server renders only
+    # the shell (with the CSRF meta), never note text, so note content reaches
+    # the page as JSON data and is placed with textContent, never as HTML.
+    return _render(request, "board.html", {"active": "board"})
+
+
+async def board_notes(request: Request) -> Response:
+    storage = request.app.state.storage
+    return JSONResponse({"notes": storage.board_notes(),
+                         "piles": [dict(p) for p in storage.board_piles()]})
+
+
+async def _json_body(request: Request):
+    # Parse a JSON request body, raising 400 on malformed input rather than 500.
+    try:
+        return await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid json body")
+
+
+async def board_positions(request: Request) -> Response:
+    _require_csrf(request, "")
+    body = await _json_body(request)
+    positions = body.get("positions") if isinstance(body, dict) else None
+    if not isinstance(positions, list):
+        raise HTTPException(status_code=400, detail="positions must be a list")
+    written = request.app.state.storage.save_positions(positions)
+    return JSONResponse({"ok": True, "written": written})
+
+
+async def board_piles(request: Request) -> Response:
+    _require_csrf(request, "")
+    body = await _json_body(request)
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="invalid body")
+    piles = body.get("piles", [])
+    assignments = body.get("assignments", {})
+    if not isinstance(piles, list) or not isinstance(assignments, dict):
+        raise HTTPException(status_code=400, detail="invalid piles payload")
+    mapping = request.app.state.storage.save_piles(piles, assignments)
+    # Keys are client ids (strings); JSON object keys are strings already.
+    return JSONResponse({"ok": True, "piles": mapping})
+
+
+async def board_add(request: Request) -> Response:
+    _require_csrf(request, "")
+    body = await _json_body(request)
+    text = body.get("text", "") if isinstance(body, dict) else ""
+    if not isinstance(text, str) or not text.strip():
+        return JSONResponse({"ok": False, "error": "empty note"}, status_code=400)
+    storage = request.app.state.storage
+    embedder = request.app.state.embedder
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    result = await capture_async(storage, embedder, text, "web", now)
+    return JSONResponse({"ok": True, "note_id": result.note_id,
+                         "receipt": result.receipt})
+
+
+async def board_delete(request: Request) -> Response:
+    _require_csrf(request, "")
+    body = await _json_body(request)
+    try:
+        note_id = int(body.get("note_id")) if isinstance(body, dict) else None
+    except (TypeError, ValueError):
+        note_id = None
+    if note_id is None:
+        raise HTTPException(status_code=400, detail="note_id required")
+    deleted = request.app.state.storage.delete_note(note_id)
+    return JSONResponse({"ok": True, "deleted": deleted})
+
+
 # --- factory ---------------------------------------------------------------
 
 def _validate_web_config(config) -> None:
@@ -328,8 +404,16 @@ def build_app(storage, embedder, config) -> Starlette:
         Route("/login", login_get, methods=["GET"]),
         Route("/login", login_post, methods=["POST"]),
         Route("/logout", logout_post, methods=["POST"]),
-        Route("/", search_page, methods=["GET"]),
-        Route("/search", search_fragment, methods=["GET"]),
+        # The board is the home surface (W4). The text Search page moves to
+        # /search; its live-results fragment moves to /search/results.
+        Route("/", board_page, methods=["GET"]),
+        Route("/board/notes", board_notes, methods=["GET"]),
+        Route("/board/positions", board_positions, methods=["POST"]),
+        Route("/board/piles", board_piles, methods=["POST"]),
+        Route("/board/add", board_add, methods=["POST"]),
+        Route("/board/delete", board_delete, methods=["POST"]),
+        Route("/search", search_page, methods=["GET"]),
+        Route("/search/results", search_fragment, methods=["GET"]),
         Route("/add", add_note, methods=["POST"]),
         Route("/timeline", timeline_page, methods=["GET"]),
         Route("/topics", topics_page, methods=["GET"]),

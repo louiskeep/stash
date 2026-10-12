@@ -12,7 +12,8 @@
   <header class="bar">
     <a class="wordmark" href="/">stash</a>
     <nav class="nav">
-      <a href="/" class="{% if active == 'search' %}on{% endif %}">Search</a>
+      <a href="/" class="{% if active == 'board' %}on{% endif %}">Board</a>
+      <a href="/search" class="{% if active == 'search' %}on{% endif %}">Search</a>
       <a href="/timeline" class="{% if active == 'timeline' %}on{% endif %}">Timeline</a>
       <a href="/topics" class="{% if active == 'topics' %}on{% endif %}">Topics</a>
       <a href="/reminders" class="{% if active == 'reminders' %}on{% endif %}">Reminders</a>
