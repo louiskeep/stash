@@ -14,6 +14,10 @@
 (function () {
   "use strict";
 
+  // Tell board.js that this module owns the drag-release handler, set
+  // synchronously at load so it is true before board.js's async first build.
+  window.__boardPilesActive = true;
+
   function board() { return window.__board; }
 
   // pile model lives here; seeded from the server payload on each reload.
@@ -164,11 +168,16 @@
   }
 
   function onReleaseEnd(item) {
-    // First see if it left a pile; otherwise see if it was dropped onto a note.
-    if (unstackIfDroppedOutside(item)) return;
-    var over = overlappingItem(item);
-    if (over) stack(noteId(item), noteId(over));
-    else render();
+    // One handler per release: resolve stacking first, then persist positions.
+    // This replaces board.js's own save subscription (see __boardPilesActive),
+    // so positions and piles are never two racing writes.
+    if (!unstackIfDroppedOutside(item)) {
+      var over = overlappingItem(item);
+      if (over) stack(noteId(item), noteId(over));
+      else render();
+    }
+    var b = board();
+    if (b && b.savePositions) b.savePositions();
   }
 
   // Collapsed piles toggle open on a click of the top card (not a drag).
@@ -188,22 +197,33 @@
     render();
   }
 
-  // --- wire into the board once Muuri exists -----------------------------
-  function attach() {
+  // --- wire into the board -----------------------------------------------
+  // board.js calls window.__onBoardBuilt after every (re)build, handing us the
+  // fresh Muuri instance. We bind our single release handler to it and redraw
+  // the piles. seedFromState re-reads pile membership from the latest server
+  // payload (set by reload) so piles survive adds, filters and reorders.
+  var clickWired = false;
+  var boundInstance = null;
+  window.__onBoardBuilt = function () {
     var b = board();
-    if (!b || !b.muuri) { setTimeout(attach, 60); return; }
+    if (!b || !b.muuri) return;
     seedFromState();
-    b.muuri.on("dragReleaseEnd", onReleaseEnd);
-    document.getElementById("grid").addEventListener("click", onTopClick, true);
+    if (boundInstance !== b.muuri) {   // bind once per Muuri instance
+      b.muuri.on("dragReleaseEnd", onReleaseEnd);
+      boundInstance = b.muuri;
+    }
+    if (!clickWired) {
+      document.getElementById("grid").addEventListener("click", onTopClick, true);
+      clickWired = true;
+    }
     render();
-    // Re-seed and re-render after any full reload (add/order change rebuilds).
-    var origReload = b.reload;
-    b.reload = function () {
-      return origReload().then(function () {
-        setTimeout(function () { seedFromState(); b.muuri.on("dragReleaseEnd", onReleaseEnd); render(); }, 0);
-      });
-    };
-  }
+  };
 
-  attach();
+  // If the board was already built before this module loaded, catch up once.
+  function catchUp() {
+    var b = board();
+    if (b && b.muuri) { window.__onBoardBuilt(); return; }
+    setTimeout(catchUp, 60);
+  }
+  catchUp();
 })();

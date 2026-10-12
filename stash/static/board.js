@@ -20,6 +20,15 @@
   var hint = document.getElementById("hint");
   var wrap = document.getElementById("wrap");
   var chipsBox = document.getElementById("chips");
+
+  // Muuri is vendored at /static/muuri.min.js (never a runtime CDN). If it is
+  // missing, say so clearly instead of failing silently.
+  if (typeof Muuri === "undefined") {
+    hint.textContent = "The board needs its drag library. Run: curl -L -o " +
+      "stash/static/muuri.min.js https://cdnjs.cloudflare.com/ajax/libs/muuri/0.9.5/muuri.min.js";
+    hint.hidden = false;
+    return;
+  }
   var muuri = null;
 
   var state = { notes: [], piles: [], order: "newest", tag: null, cat: null, timersOnly: false };
@@ -108,31 +117,82 @@
   }
 
   // --- board build -------------------------------------------------------
+  // Free-canvas layout: a note with saved x/y keeps exactly that spot across
+  // reloads and devices; a note without saved coordinates (brand new) flows into
+  // the first open grid slot so it is never dropped off-screen. This is what
+  // makes the arrangement persist -- Muuri's default grid would re-flow every
+  // note by order and discard saved positions.
+  function posFor(id) {
+    var n = state.notes.find(function (x) { return x.id === id; });
+    return n && n.x != null && n.y != null ? { x: n.x, y: n.y } : null;
+  }
+
+  function customLayout(gridInst, layoutId, items, width, height, callback) {
+    var COL = 224, ROW = 150, pad = 8; // flow step for unplaced notes
+    var cols = Math.max(1, Math.floor((width - pad) / COL));
+    var slots = [];
+    var maxY = 0, flow = 0;
+    for (var i = 0; i < items.length; i++) {
+      var id = +items[i].getElement().dataset.id;
+      var saved = posFor(id);
+      var x, y;
+      if (saved) { x = saved.x; y = saved.y; }
+      else {
+        x = pad + (flow % cols) * COL;
+        y = pad + Math.floor(flow / cols) * ROW;
+        flow++;
+      }
+      slots.push(x, y);
+      if (y + ROW > maxY) maxY = y + ROW;
+    }
+    callback({
+      id: layoutId, items: items, slots: slots,
+      styles: { width: "100%", height: Math.max(height, maxY + 40) + "px" }
+    });
+  }
+
   function buildBoard() {
     if (muuri) { muuri.destroy(); grid.innerHTML = ""; }
-    var ordered = state.notes.slice().sort(sortNotes);
+    // Order by saved z when present (so stacking order survives), else by time.
+    var ordered = state.notes.slice().sort(function (a, b) {
+      var za = a.z, zb = b.z;
+      if (a.x != null && b.x != null && za != null && zb != null) return za - zb;
+      return sortNotes(a, b);
+    });
     ordered.forEach(function (n) { grid.appendChild(noteEl(n)); });
 
     muuri = new Muuri(grid, {
       dragEnabled: true,
       dragRelease: { duration: 420, easing: "cubic-bezier(.17,.84,.44,1)" },
       dragPlaceholder: { enabled: true, createElement: function () { var d = document.createElement("div"); d.className = "item"; d.style.opacity = "0"; return d; } },
-      layout: { fillGaps: false, horizontal: false, rounding: true },
+      layout: customLayout,
       layoutOnResize: 150,
       dragStartPredicate: function (item, e) {
         if (e.target.closest(".del")) return false;
         return Muuri.ItemDrag.defaultStartPredicate(item, e, { distance: 4, delay: 0 });
       }
     });
-    muuri.on("dragReleaseEnd", savePositions);
+    // The piles module, when loaded, owns the drag-release handler (it resolves
+    // stacking first, then calls savePositions), so we only self-subscribe when
+    // it is absent. This keeps exactly one save per release, with a deterministic
+    // order, instead of two racing fetches.
+    if (!window.__boardPilesActive) muuri.on("dragReleaseEnd", savePositions);
     applyFilter();
+    // Let the piles module (re)bind its handler and redraw against the new
+    // Muuri instance after every rebuild (load, filter, order, add, stack).
+    if (window.__onBoardBuilt) window.__onBoardBuilt();
   }
 
   function savePositions() {
     if (!muuri) return;
     var positions = muuri.getItems().map(function (it, i) {
       var el = it.getElement(); var r = it.getPosition();
-      return { note_id: +el.dataset.id, x: r.left, y: r.top, z: i };
+      var id = +el.dataset.id;
+      // Keep the in-memory note's x/y/z in sync so a later rebuild (filter,
+      // add, stack) re-applies the position the user just set, not the stale one.
+      var n = state.notes.find(function (x) { return x.id === id; });
+      if (n) { n.x = r.left; n.y = r.top; n.z = i; }
+      return { note_id: id, x: r.left, y: r.top, z: i };
     });
     api("/board/positions", { positions: positions }).catch(function () {
       toast("Could not save layout");

@@ -13,7 +13,10 @@ async def test_board_page_renders_when_authed(client):
     r = await client.get("/")
     assert r.status_code == 200
     assert 'name="csrf-token"' in r.text
-    assert "board.js" in r.text and "muuri" in r.text
+    assert "board.js" in r.text
+    # Muuri is vendored locally, never loaded from a CDN at runtime.
+    assert "/static/muuri.min.js" in r.text
+    assert "cdnjs" not in r.text and "unpkg" not in r.text
     # Nav still reaches the text pages.
     assert "/search" in r.text and "/timeline" in r.text and "/topics" in r.text
 

@@ -97,6 +97,39 @@ async def test_delete_from_board(client, storage, embedder):
     assert storage.get_note(nid) is None
 
 
+async def test_delete_bad_csrf_does_not_delete(client, storage, embedder):
+    # The destructive board action must reject a forged CSRF token before acting.
+    nid = capture(storage, embedder, "keep me", "web", _now()).note_id
+    await login(client)
+    r = await client.post("/board/delete", headers={"x-csrf-token": "bogus"},
+                          json={"note_id": nid})
+    assert r.status_code == 403
+    assert storage.get_note(nid) is not None  # still there
+
+
+async def test_piles_and_delete_bad_csrf(client, storage, embedder):
+    a = capture(storage, embedder, "a", "web", _now()).note_id
+    await login(client)
+    for path, body in [("/board/piles", {"piles": [], "assignments": {}}),
+                       ("/board/add", {"text": "x"})]:
+        r = await client.post(path, headers={"x-csrf-token": "bad"}, json=body)
+        assert r.status_code == 403
+
+
+async def test_position_save_preserves_pile(client, storage, embedder):
+    a = capture(storage, embedder, "a #p", "web", _now()).note_id
+    b = capture(storage, embedder, "b #p", "web", _now()).note_id
+    csrf = await login(client)
+    await client.post("/board/piles", headers={"x-csrf-token": csrf},
+                      json={"piles": [{"client_id": "1", "label": "#p"}],
+                            "assignments": {str(a): "1", str(b): "1"}})
+    # A position save (every drag) must not clear pile membership.
+    await client.post("/board/positions", headers={"x-csrf-token": csrf},
+                      json={"positions": [{"note_id": a, "x": 5, "y": 6, "z": 0}]})
+    notes = {n["id"]: n for n in (await client.get("/board/notes")).json()["notes"]}
+    assert notes[a]["pile_id"] is not None and notes[a]["x"] == 5
+
+
 async def test_piles_save_with_csrf(client, storage, embedder):
     a = capture(storage, embedder, "note a", "web", _now()).note_id
     b = capture(storage, embedder, "note b", "web", _now()).note_id

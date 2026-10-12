@@ -390,9 +390,14 @@ class Storage:
 
     def save_positions(self, positions) -> int:
         """Upsert board positions. `positions` is an iterable of mappings with
-        note_id and x/y/z (and optional pile_id). A position for a note that does
-        not exist is ignored (the FK insert fails) rather than raising. Returns
-        the count actually written."""
+        note_id and x/y/z. A position for a note that does not exist is ignored
+        rather than raising. Returns the count written.
+
+        This only touches x/y/z, never pile_id: pile membership is owned solely
+        by save_piles, so a position save (which happens on every drag release)
+        can never clobber a note's pile. On a first insert pile_id defaults to
+        NULL from the schema; on update it is left as-is.
+        """
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc).isoformat()
         written = 0
@@ -405,13 +410,12 @@ class Storage:
                 if self.get_note(nid) is None:
                     continue  # unknown note id: ignore, do not error
                 self.conn.execute(
-                    "INSERT INTO board_layout(note_id, x, y, z, pile_id, updated_at)"
-                    " VALUES (?,?,?,?,?,?)"
+                    "INSERT INTO board_layout(note_id, x, y, z, updated_at)"
+                    " VALUES (?,?,?,?,?)"
                     " ON CONFLICT(note_id) DO UPDATE SET"
                     " x=excluded.x, y=excluded.y, z=excluded.z,"
-                    " pile_id=excluded.pile_id, updated_at=excluded.updated_at",
-                    (nid, p.get("x"), p.get("y"), p.get("z", 0),
-                     p.get("pile_id"), now),
+                    " updated_at=excluded.updated_at",
+                    (nid, p.get("x"), p.get("y"), p.get("z", 0), now),
                 )
                 written += 1
         return written

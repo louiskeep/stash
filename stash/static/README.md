@@ -2,17 +2,21 @@
 
 - `app.css`, `htmx.min.js` - the text UI (Search, Timeline, Topics, Reminders).
 - `board.css`, `board.js`, `board-piles.js` - the board (home) surface.
+- `muuri.min.js` - the board's drag library (vendored; see below).
 
-## Muuri (board drag library)
+## Vendor Muuri (required for the board)
 
-The board loads Muuri 0.9.5 from cdnjs, so it works out of the box when the
-machine has internet on first load. stash otherwise does all processing and
-storage locally; to make the board fully offline too, vendor Muuri here:
+The board loads its drag library only from `/static/muuri.min.js`, never from a
+CDN at runtime: stash does all processing and storage locally, and loading
+third-party script into the authenticated session from a CDN would be both an
+offline break and a security risk. So Muuri is vendored here.
 
-1. Download `muuri.min.js` (version 0.9.5) from
-   https://cdnjs.cloudflare.com/ajax/libs/muuri/0.9.5/muuri.min.js
-2. Save it as `stash/static/muuri.min.js`.
-3. In `stash/templates/board.html`, change the Muuri `<script src>` from the
-   cdnjs URL to `/static/muuri.min.js`.
+Fetch it once (version 0.9.5):
 
-After that the board needs no network.
+```bash
+curl -L -o stash/static/muuri.min.js \
+  https://cdnjs.cloudflare.com/ajax/libs/muuri/0.9.5/muuri.min.js
+```
+
+Until this file exists, the board page shows a message asking you to run that
+command; every other page works without it.
