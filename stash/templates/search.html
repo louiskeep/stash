@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Search · stash{% endblock %}
+{% block content %}
+<form class="capture" method="post" action="/add">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="text" name="text" placeholder="Stash a thought" aria-label="New note"
+         autocomplete="off">
+  <button type="submit">Stash</button>
+</form>
+{% if receipt %}<p class="receipt">{{ receipt }}</p>{% endif %}
+
+<form class="find" role="search">
+  <input type="search" name="q" value="{{ q or '' }}" placeholder="Find a note"
+         aria-label="Search notes" autocomplete="off"
+         hx-get="/search" hx-target="#results" hx-trigger="input changed delay:200ms, search"
+         hx-indicator="#finding">
+  <span id="finding" class="htmx-indicator">searching</span>
+</form>
+
+<section id="results">
+  {% include "_tiles.html" %}
+</section>
+{% endblock %}

@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Topics · stash{% endblock %}
+{% block content %}
+<h1 class="page">Topics</h1>
+{% if not tags and not categories %}
+  <p class="empty">No tags or categories yet. Add <span class="code">#tags</span> or
+  <span class="code">@category</span> to a note and they will group here.</p>
+{% endif %}
+
+{% if tags %}
+<section class="group">
+  <h2 class="sub">Tags</h2>
+  <ul class="chips">
+    {% for t in tags %}
+    <li><a href="/topics/tag/{{ t.tag }}">#{{ t.tag }} <span class="n">{{ t.n }}</span></a></li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if categories %}
+<section class="group">
+  <h2 class="sub">Categories</h2>
+  <ul class="chips">
+    {% for c in categories %}
+    <li><a href="/topics/category/{{ c.category }}">@{{ c.category }} <span class="n">{{ c.n }}</span></a></li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+{% endblock %}

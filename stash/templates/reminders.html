@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Reminders · stash{% endblock %}
+{% block content %}
+<h1 class="page">Reminders</h1>
+{% if not reminders %}
+  <p class="empty">No reminders. Write "remind me in 30min to..." in a note and it will show up here.</p>
+{% else %}
+  <ol class="notes">
+    {% for r in reminders %}
+    <li class="note">
+      <a class="raw" href="/note/{{ r.note_id }}">{{ r.raw }}</a>
+      <div class="meta">
+        <span class="r-status r-{{ r.status }}">{{ r.status }}</span>
+        <time>fires {{ r.fire_at[:16].replace('T', ' ') }}</time>
+        {% if r.sent_at %}<time>sent {{ r.sent_at[:16].replace('T', ' ') }}</time>{% endif %}
+      </div>
+    </li>
+    {% endfor %}
+  </ol>
+{% endif %}
+{% endblock %}

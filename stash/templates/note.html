@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Note · stash{% endblock %}
+{% block content %}
+<article class="detail">
+  <pre class="raw-full">{{ note.raw }}</pre>
+  <div class="meta">
+    <time>{{ note.created_at[:16].replace('T', ' ') }}</time>
+    <span class="src">{{ note.source }}</span>
+    {% if note.category %}<a class="cat" href="/topics/category/{{ note.category }}">@{{ note.category }}</a>{% endif %}
+    {% if note.intent and note.intent != 'note' %}<span class="intent">{{ note.intent }}</span>{% endif %}
+  </div>
+  {% if note.tags %}
+  <div class="tags">
+    {% for t in note.tags %}<a class="tag" href="/topics/tag/{{ t }}">#{{ t }}</a>{% endfor %}
+  </div>
+  {% endif %}
+
+  {% if note.reminder %}
+  <div class="reminder-box">
+    <span class="r-status r-{{ note.reminder.status }}">{{ note.reminder.status }}</span>
+    reminder for {{ note.reminder.fire_at[:16].replace('T', ' ') }}
+    {% if note.reminder.sent_at %}· sent {{ note.reminder.sent_at[:16].replace('T', ' ') }}{% endif %}
+  </div>
+  {% endif %}
+</article>
+
+{% if related %}
+<section class="related">
+  <h2 class="sub">Related</h2>
+  <ol class="notes">
+    {% for n in related %}
+    <li class="note">
+      <a class="raw" href="/note/{{ n.id }}">{{ n.raw }}</a>
+      <div class="meta"><time>{{ n.created_at[:10] }}</time></div>
+    </li>
+    {% endfor %}
+  </ol>
+</section>
+{% endif %}
+{% endblock %}

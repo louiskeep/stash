@@ -148,6 +148,124 @@ class Storage:
         ).fetchall()
         return [r["note_id"] for r in rows]
 
+    # --- read-only browse queries (web UI) ---------------------------------
+    # Plain SELECTs, no schema change. The web routes stay thin by calling
+    # these, and the queries are covered by storage tests independently of HTTP.
+
+    def recent_notes(self, limit, before_id=None) -> list[sqlite3.Row]:
+        """Notes newest-first, keyset-paginated by id.
+
+        Keyset (id < before_id) rather than OFFSET so pagination is stable
+        under concurrent inserts: a new note arriving between page loads never
+        shifts rows across the page boundary. `before_id=None` is the first
+        page. The caller may request limit+1 to detect whether an older page
+        exists.
+        """
+        if before_id is None:
+            return self.conn.execute(
+                "SELECT * FROM notes ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return self.conn.execute(
+            "SELECT * FROM notes WHERE id < ? ORDER BY id DESC LIMIT ?",
+            (before_id, limit),
+        ).fetchall()
+
+    def notes_by_tag(self, tag, limit) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT n.* FROM notes n"
+            " JOIN note_tags t ON t.note_id = n.id"
+            " WHERE t.tag = ? ORDER BY n.id DESC LIMIT ?",
+            (tag, limit),
+        ).fetchall()
+
+    def notes_by_category(self, category, limit) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT n.* FROM notes n"
+            " JOIN note_meta m ON m.note_id = n.id"
+            " WHERE m.category = ? ORDER BY n.id DESC LIMIT ?",
+            (category, limit),
+        ).fetchall()
+
+    def tag_counts(self) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT tag, COUNT(*) AS n FROM note_tags"
+            " GROUP BY tag ORDER BY n DESC, tag"
+        ).fetchall()
+
+    def category_counts(self) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT category, COUNT(*) AS n FROM note_meta"
+            " WHERE category IS NOT NULL AND category != ''"
+            " GROUP BY category ORDER BY n DESC, category"
+        ).fetchall()
+
+    def related_by_embedding(self, note_id, limit) -> list[sqlite3.Row]:
+        """Nearest notes to this note's own stored embedding, excluding itself.
+
+        Reads the note's vector from vec_notes and runs a KNN for limit+1, then
+        drops the note itself (always its own nearest neighbor). Returns [] when
+        the note has no stored embedding yet (e.g. still underived).
+        """
+        vrow = self.conn.execute(
+            "SELECT embedding FROM vec_notes WHERE note_id = ?", (note_id,)
+        ).fetchone()
+        if vrow is None:
+            return []
+        hits = self.conn.execute(
+            "SELECT note_id FROM vec_notes"
+            " WHERE embedding MATCH ? AND k = ? ORDER BY distance",
+            (vrow["embedding"], limit + 1),
+        ).fetchall()
+        ids = [r["note_id"] for r in hits if r["note_id"] != note_id][:limit]
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+        rows = self.conn.execute(
+            f"SELECT * FROM notes WHERE id IN ({placeholders})", ids
+        ).fetchall()
+        # Preserve nearest-first order from the KNN, which the IN (...) query loses.
+        by_id = {r["id"]: r for r in rows}
+        return [by_id[i] for i in ids if i in by_id]
+
+    def note_detail(self, note_id) -> dict | None:
+        """A note with its tags, meta, and reminder, assembled for the detail page.
+
+        Returns a plain dict (not a Row) so the template sees a single object
+        carrying raw/created_at/source plus category, intent, tags, and an
+        optional reminder sub-dict. None when the note does not exist.
+        """
+        note = self.get_note(note_id)
+        if note is None:
+            return None
+        meta = self.conn.execute(
+            "SELECT category, intent FROM note_meta WHERE note_id = ?", (note_id,)
+        ).fetchone()
+        tags = [r["tag"] for r in self.conn.execute(
+            "SELECT tag FROM note_tags WHERE note_id = ? ORDER BY tag", (note_id,))]
+        reminder = self.conn.execute(
+            "SELECT status, fire_at, sent_at, attempts FROM reminders WHERE note_id = ?",
+            (note_id,),
+        ).fetchone()
+        return {
+            "id": note["id"],
+            "raw": note["raw"],
+            "source": note["source"],
+            "created_at": note["created_at"],
+            "category": meta["category"] if meta else None,
+            "intent": meta["intent"] if meta else None,
+            "tags": tags,
+            "reminder": dict(reminder) if reminder else None,
+        }
+
+    def list_reminders(self, limit) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT r.note_id, r.status, r.fire_at, r.sent_at, r.attempts, n.raw"
+            " FROM reminders r JOIN notes n ON n.id = r.note_id"
+            " ORDER BY r.fire_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+
     def claim_one_due_reminder(self, now, lease_seconds, max_attempts, allowed_ids):
         # Claim exactly one reminder per call: pending, due, under the
         # attempt cap, and either never claimed or its lease has expired.
