@@ -3,6 +3,46 @@
 Dated log of merged/merge-ready slices with gate evidence. The roadmap points
 here instead of restating history.
 
+## 2026-10-12: W6: Saved Boards + UI refinements
+
+Branch `feat/w6-saved-boards` (off `feat/w5-single-screen`). (1) Split the Topic
+dropdown into independent Category and Tag selects. (2) The board scrolls
+vertically only, with a thin subtle scrollbar; saved card positions clamp to the
+visible width. (3) Saved boards: a named filter set, saved from the current
+filters, listed down the left and re-applied on click (filters only, one shared
+canvas). The active-timers rail is replaced by a top-bar Reminders button that
+opens a countdown dropdown with click-to-focus. (4) Date-only range filtering
+(the To date includes its whole day).
+
+What shipped: migration 3 (`boards` table, durable, reindex-safe); storage
+list/save/delete_board; GET /board/boards + CSRF-protected save/delete; the
+Category/Tag selects, date-only parse, x-clamped vertical-only layout, the
+saved-boards column, and the reminders dropdown.
+
+Gate evidence:
+- 4 tasks, plan on disk at
+  `docs/superpowers/plans/2026-10-12-stash-w6-saved-boards.md`, acceptance tests
+  per task before implementation (R2).
+- Independent cold review: 0 Critical (no XSS - board names and reminders render
+  via textContent; auth/CSRF on all three new routes with the check before any
+  write; config validated as an object before storing and parsed defensively on
+  read; reindex leaves boards untouched). One HIGH fixed: a stale
+  test_board_page.py asserted the old topic/rail markup (repointed). Two MEDIUM
+  fixed: the save-board input could double-submit (reentrancy guard added) and
+  the active-board highlight detached on input not change (now both).
+- Category + Tag AND independently and self-heal their selection after a delete;
+  the date range is inclusive of the To day; no horizontal scroll at any width.
+
+Verification note: no sqlite-vec or browser in the build environment, so the
+boards endpoints, migration, reindex-safety, and the filter/date logic are
+verified in-session via ASGITransport and fake storage (board JS passes
+node --check); the live filtering, saved-board save/apply/delete, scroll, and
+reminders dropdown are user-verified in a browser. Run the suite with sqlite-vec
+before merge.
+
+Not in W6 (by design): per-board canvas layouts (filters only); drag-reorder of
+saved boards; snooze/cancel reminders.
+
 ## 2026-10-12: W5: Single Screen
 
 Branch `feat/w5-single-screen` (off `feat/w4-board`). The whole web UI is now one
