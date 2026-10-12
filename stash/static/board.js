@@ -429,6 +429,106 @@
     openComposer(e.clientX - r.left + this.scrollLeft, e.clientY - r.top + this.scrollTop);
   });
 
+  // --- settings (theme, default sort, tag/category colors) ---------------
+  var settings = { theme: "system", defaultSort: "newest", colors: {} };
+  var settingsBtn = document.getElementById("settingsBtn");
+  var settingsPanel = document.getElementById("settingsPanel");
+  var colorsList = document.getElementById("colorsList");
+  var colorsEmpty = document.getElementById("colorsEmpty");
+  var defaultSortSel = document.getElementById("defaultSort");
+  var HEX = /^#[0-9a-fA-F]{6}$/;
+
+  function applyTheme(theme) {
+    var root = document.documentElement;
+    if (theme === "light" || theme === "dark") root.setAttribute("data-theme", theme);
+    else root.removeAttribute("data-theme");  // system: follow prefers-color-scheme
+    document.querySelectorAll("#themeRow .theme-opt").forEach(function (b) {
+      b.classList.toggle("on", b.dataset.theme === theme);
+    });
+  }
+  function applySettings(s) {
+    settings = s || settings;
+    chipColors = {};  // the map noteEl reads via applyChipColor
+    Object.keys(settings.colors || {}).forEach(function (k) {
+      if (HEX.test(settings.colors[k])) chipColors[k] = settings.colors[k];
+    });
+    applyTheme(settings.theme);
+    defaultSortSel.value = settings.defaultSort || "newest";
+    renderColorRows();
+  }
+  function saveSettings() {
+    api("/board/settings", settings).then(function (r) {
+      if (!r.ok) throw 0; return r.json();
+    }).then(function (clean) { applySettings(clean); if (muuri) buildBoard(); })
+      .catch(function () { toast("Could not save settings"); });
+  }
+  function loadSettings() {
+    return fetch("/board/settings", { headers: { "X-CSRF-Token": CSRF } })
+      .then(function (r) { return r.json(); })
+      .then(function (s) {
+        applySettings(s);
+        // Default sort is the initial order unless the user already changed it.
+        if (!orderTouched) { state.order = settings.defaultSort || "newest";
+          document.getElementById("order").value = state.order; }
+      }).catch(function () {});
+  }
+
+  function renderColorRows() {
+    var cats = {}, tags = {};
+    state.notes.forEach(function (n) {
+      if (n.category) cats[n.category] = true;
+      (n.tags || []).forEach(function (t) { tags[t] = true; });
+    });
+    var keys = Object.keys(cats).sort().map(function (c) { return { key: "cat:" + c, label: "@" + c }; })
+      .concat(Object.keys(tags).sort().map(function (t) { return { key: "tag:" + t, label: "#" + t }; }));
+    colorsList.innerHTML = "";
+    colorsEmpty.hidden = keys.length !== 0;
+    keys.forEach(function (item) {
+      var row = document.createElement("div"); row.className = "color-row";
+      var lab = document.createElement("span"); lab.className = "color-label"; lab.textContent = item.label;
+      var input = document.createElement("input"); input.type = "color";
+      input.value = settings.colors[item.key] || "#888888";
+      input.addEventListener("change", function () {
+        settings.colors[item.key] = input.value; saveSettings();
+      });
+      var clear = document.createElement("button"); clear.type = "button"; clear.className = "color-clear";
+      clear.textContent = "×"; clear.title = "Remove color";
+      clear.addEventListener("click", function () { delete settings.colors[item.key]; saveSettings(); });
+      row.appendChild(lab); row.appendChild(input); row.appendChild(clear);
+      colorsList.appendChild(row);
+    });
+  }
+
+  function openSettings() {
+    settingsPanel.hidden = false; settingsBtn.setAttribute("aria-expanded", "true");
+    renderColorRows();
+    document.addEventListener("click", outsideSettings, true);
+    document.addEventListener("keydown", escSettings, true);
+  }
+  function closeSettings() {
+    settingsPanel.hidden = true; settingsBtn.setAttribute("aria-expanded", "false");
+    document.removeEventListener("click", outsideSettings, true);
+    document.removeEventListener("keydown", escSettings, true);
+  }
+  function outsideSettings(e) {
+    if (!settingsPanel.contains(e.target) && e.target !== settingsBtn && !settingsBtn.contains(e.target)) closeSettings();
+  }
+  function escSettings(e) { if (e.key === "Escape") { closeSettings(); settingsBtn.focus(); } }
+  settingsBtn.addEventListener("click", function (e) {
+    e.stopPropagation(); if (settingsPanel.hidden) openSettings(); else closeSettings();
+  });
+  document.getElementById("themeRow").addEventListener("click", function (e) {
+    var b = e.target.closest(".theme-opt"); if (!b) return;
+    settings.theme = b.dataset.theme; applyTheme(settings.theme); saveSettings();
+  });
+  defaultSortSel.addEventListener("change", function () {
+    settings.defaultSort = this.value; saveSettings();
+  });
+  // Track whether the user has manually changed the board order, so loading the
+  // default sort does not override an explicit choice made before settings load.
+  var orderTouched = false;
+  document.getElementById("order").addEventListener("change", function () { orderTouched = true; });
+
   // --- saved boards ------------------------------------------------------
   // A saved board is a named filter set. "Save current" stores the active
   // filters; clicking a saved board re-applies them. One shared canvas layout.
@@ -533,10 +633,14 @@
         state.notes = data.notes || [];
         state.piles = data.piles || [];
         buildTopics(); buildBoard();
+        if (!settingsPanel.hidden) renderColorRows();
       });
   }
 
-  reload().catch(function () { hint.textContent = "Could not load your notes."; hint.hidden = false; });
+  // Load settings first (theme + colors ready before cards build), then notes.
+  loadSettings()
+    .then(reload)
+    .catch(function () { hint.textContent = "Could not load your notes."; hint.hidden = false; });
   loadBoards();
 
   setInterval(function () {

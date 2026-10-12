@@ -47,6 +47,32 @@
         <div class="rem-empty" id="remEmpty">No active reminders.</div>
       </div>
     </div>
+    <div class="settings-wrap">
+      <button class="ghost gear" id="settingsBtn" type="button" aria-haspopup="true"
+              aria-expanded="false" aria-label="Settings" title="Settings">&#9881;</button>
+      <div class="settings-panel" id="settingsPanel" hidden role="dialog" aria-label="Settings">
+        <div class="settings-sec">
+          <div class="settings-label">Theme</div>
+          <div class="theme-row" id="themeRow">
+            <button type="button" data-theme="system" class="theme-opt">System</button>
+            <button type="button" data-theme="light" class="theme-opt">Light</button>
+            <button type="button" data-theme="dark" class="theme-opt">Dark</button>
+          </div>
+        </div>
+        <div class="settings-sec">
+          <div class="settings-label">Default sort</div>
+          <select id="defaultSort" aria-label="Default sort">
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+          </select>
+        </div>
+        <div class="settings-sec">
+          <div class="settings-label">Colors</div>
+          <div class="colors-list" id="colorsList"></div>
+          <div class="colors-empty" id="colorsEmpty">Add #tags or @categories to color them.</div>
+        </div>
+      </div>
+    </div>
     <form class="logout" method="post" action="/logout" style="margin:0">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button class="ghost" type="submit">Sign out</button>
