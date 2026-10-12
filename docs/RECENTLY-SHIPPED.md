@@ -3,6 +3,47 @@
 Dated log of merged/merge-ready slices with gate evidence. The roadmap points
 here instead of restating history.
 
+## 2026-10-12: W7: Clickable tags + Settings & colors
+
+Branch `feat/w7-tags-settings` (off `feat/w6-saved-boards`). (1) Clicking a `#tag`
+or `@category` on a note card filters the board to it (reusing the filter path;
+the chips are excluded from dragging). (2) A gear Settings pane (top right) with a
+theme control (System / Light / Dark, applied via the existing `data-theme`
+tokens), a default sort, and a native color picker per tag and category that tints
+that tag on cards. Settings persist server-side.
+
+What shipped: settings stored as one JSON document in the existing `kv` table
+(reindex-safe, no migration), validated by `_normalize_settings` (theme/sort
+allowlists; colors kept only if they match `#rrggbb` and a `tag:`/`cat:` key);
+`get_settings`/`save_settings`; GET /board/settings (auth) and POST (CSRF). Client:
+clickable chips, the settings module (load/apply theme+colors+sort, the panel,
+save on change), and the chip color hook.
+
+Gate evidence:
+- 4 tasks, plan on disk at
+  `docs/superpowers/plans/2026-10-12-stash-w7-clickable-tags-settings.md`,
+  acceptance tests per task (R2).
+- Independent cold review: GO, 0 Critical. The color-to-DOM path (the main XSS
+  risk) was traced end to end and cannot inject: every color passes a #rrggbb
+  gate server-side (and again client-side) and only ever reaches el.style, never
+  innerHTML; the server re-validates on POST so a tampered client payload can't
+  persist a bad color either. One HIGH fixed: clicking a tag chip on a pile's top
+  card also toggled the pile (the piles capture-phase handler missed the .chipbtn
+  exclusion). One MEDIUM fixed: a settings-load failure could blank the board
+  (settings now never gate the notes load).
+- Auth/CSRF on both routes; settings durable (kv, reindex-safe) and
+  corruption-tolerant (defaults, no 500); theme/sort/colors round-trip.
+
+Verification note: no sqlite-vec or browser in the build environment, so the
+settings endpoints, normalization/validation, and kv round-trip are verified
+in-session via ASGITransport and fake storage (board JS passes node --check); the
+live tag-click, color application, theme switch, and settings panel are
+user-verified. Run the suite with sqlite-vec before merge.
+
+Not in W7 (by design): per-note color overrides; the wider settings backlog
+(density, default filters, reminder lead time, parsing rules, export/backup,
+password change).
+
 ## 2026-10-12: W6: Saved Boards + UI refinements
 
 Branch `feat/w6-saved-boards` (off `feat/w5-single-screen`). (1) Split the Topic
