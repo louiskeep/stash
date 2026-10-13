@@ -108,6 +108,14 @@ MIGRATIONS: list[tuple[int, str]] = [
     -- are never combined or rewritten -- a merge is a reversible grouping, so
     -- this is durable state a reindex must preserve, exactly like pile_id.
     -- Free-canvas x/y are no longer written; old rows keep their values harmlessly.
+    --
+    -- The former "piles" are retired: a loose stack cannot be faithfully mapped
+    -- to an ordered merged card (no per-note order was stored), so we start the
+    -- new model clean rather than inventing an arbitrary order. These two resets
+    -- are idempotent and come first, so a crash-recovery re-run (which fails on
+    -- the ALTER with "duplicate column name") still leaves a consistent state.
+    UPDATE board_layout SET pile_id = NULL;
+    DELETE FROM board_piles;
     ALTER TABLE board_layout ADD COLUMN seq INTEGER NOT NULL DEFAULT 0;
     """),
 ]

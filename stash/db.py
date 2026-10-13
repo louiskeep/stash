@@ -35,9 +35,19 @@ def migrate(conn: sqlite3.Connection) -> None:
     for version, sql in sorted(MIGRATIONS):
         if version in done:
             continue
-        # executescript() autocommits DDL; use IF NOT EXISTS to enable idempotent recovery.
-        # Run script, record version, then commit so the version row is durable.
-        conn.executescript(sql)
+        # executescript() autocommits DDL; migrations use IF NOT EXISTS (and, for
+        # an additive ALTER, order idempotent statements first) so a re-run after
+        # a crash in the window below is safe. Run script, record version, then
+        # commit so the version row is durable.
+        try:
+            conn.executescript(sql)
+        except sqlite3.OperationalError as e:
+            # Recovery path: if a prior run committed the DDL but crashed before
+            # its version row did, re-adding a column raises "duplicate column
+            # name". That means the migration already applied -- record it and
+            # move on. Anything else is a real error.
+            if "duplicate column name" not in str(e).lower():
+                raise
         conn.execute(
             "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
             (version, datetime.now(timezone.utc).isoformat()),

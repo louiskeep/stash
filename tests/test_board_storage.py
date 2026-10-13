@@ -58,6 +58,30 @@ def test_save_groups_ignores_unknown_and_singletons():
     assert notes[a]["pile_id"] is None and notes[b]["pile_id"] is None
 
 
+def test_merge_never_touches_raw_notes():
+    # The core invariant: merging is a grouping, never a rewrite or delete.
+    s, e, a, b = _mk()
+    before = {n["id"]: n["raw"] for n in (s.get_note(a), s.get_note(b))}
+    s.save_groups([[a, b]])
+    assert s.get_note(a)["raw"] == before[a]
+    assert s.get_note(b)["raw"] == before[b]
+    # Both rows still exist after the merge.
+    assert s.get_note(a) is not None and s.get_note(b) is not None
+
+
+def test_save_groups_disjoint_across_groups():
+    # A note named in two groups lands in only one; the other group loses it and,
+    # left with a single real member, is dropped.
+    s, e, a, b = _mk()
+    c = capture(s, e, "third note", "web", _now()).note_id
+    written = s.save_groups([[a, b], [b, c]])  # b appears twice
+    notes = {n["id"]: n for n in s.board_notes()}
+    # First group keeps a+b together; c is left alone, so its group is dropped.
+    assert notes[a]["pile_id"] == notes[b]["pile_id"] is not None
+    assert notes[c]["pile_id"] is None
+    assert written == 1
+
+
 def test_save_groups_rebuild_detaches_old():
     s, e, a, b = _mk()
     s.save_groups([[a, b]])

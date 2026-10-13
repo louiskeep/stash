@@ -42,8 +42,8 @@ still runs. Open:
 http://127.0.0.1:8000
 ```
 
-Log in with your password. The whole web UI is one screen: the **Board**, a
-canvas of your notes as draggable paper cards. Everything else is a control on it:
+Log in with your password. The whole web UI is one screen: the **Board**, an
+ordered grid of your notes as paper cards. Everything else is a control on it:
 
 - **Search** (top bar) - type to narrow the board to matching notes, by keyword
   and by meaning.
@@ -60,13 +60,22 @@ canvas of your notes as draggable paper cards. Everything else is a control on i
 
 All the filters stack: search, category, tag, and time range narrow the same
 board together. You can also click a `#tag` or `@category` on any card to filter
-to it. Drag cards to arrange them (the layout is saved on the server, so it is the
-same on any device), drop one card onto another to stack them into a labeled pile,
-and add a note with the + button or a double-click on the board.
+to it, and add a note with the + button or a double-click on the board.
+
+**Merging.** Drag one card onto another to combine them into a single card:
+drop over the **top** half to put the dragged note's text above the other's, the
+**bottom** half to put it below. A merged card shows a count and both notes'
+tags. To take it apart again, hover the dashed line between the notes and click
+**separate**. Merging only groups the notes for display -- each note is kept
+exactly as you wrote it and can always be separated back out; nothing is combined
+into one note or lost. The grouping is saved on the server, so it is the same on
+any device.
 
 **Settings** (the gear icon, top right) let you pick a theme (System / Light /
-Dark), set the board's default sort, and assign a color to any tag or category,
-which then tints that tag on cards. Settings are saved on the server.
+Dark), set the board's default sort, and assign a color to any tag or category.
+Each card is tinted by its category (with a colored edge) so the board reads by
+zone at a glance; a category or tag with no color you have chosen gets a stable
+default color. Settings are saved on the server.
 
 The web UI never edits a note's text; the raw note is kept exactly as you sent it.
 Deleting a card (the x on it) removes that note. Automatic topics from

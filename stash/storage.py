@@ -445,6 +445,7 @@ class Storage:
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc).isoformat()
         written = 0
+        placed: set[int] = set()  # a note belongs to at most one group
         with self.conn:
             # Detach every note first, then rebuild the groups. Deleting a group
             # row SET NULLs its members via FK, but we clear explicitly so a
@@ -460,10 +461,15 @@ class Storage:
                         nid = int(raw_id)
                     except (TypeError, ValueError):
                         continue
-                    if self.get_note(nid) is not None and nid not in ids:
+                    # Skip unknown ids, repeats within the group, and any note
+                    # already placed in an earlier group (groups are disjoint).
+                    if nid in ids or nid in placed:
+                        continue
+                    if self.get_note(nid) is not None:
                         ids.append(nid)
                 if len(ids) < 2:
                     continue  # a group needs at least two real notes
+                placed.update(ids)
                 cur = self.conn.execute(
                     "INSERT INTO board_piles(label, collapsed, updated_at)"
                     " VALUES ('', 0, ?)",

@@ -3,6 +3,63 @@
 Dated log of merged/merge-ready slices with gate evidence. The roadmap points
 here instead of restating history.
 
+## 2026-10-12: W8: Grid + merge board, warm light/dark refresh
+
+Branch `feat/w8-design-refresh` (off `feat/w7-tags-settings`). A deliberate shift
+from the austere free-drag canvas toward a friendlier tool, approved by the user
+against an interactive light/dark preview before any app code changed.
+
+What shipped:
+- **Interaction model.** The free-drag Muuri canvas and offset "piles" are gone.
+  Notes lay out in an ordered CSS grid (Newest/Oldest). Dragging one card onto
+  another's top/bottom half **merges** them into one card (dragged text above or
+  below the target); clicking the dashed divider **snips** a merged card apart.
+  A merge is a reversible grouping -- each raw note stays its own row, never
+  rewritten or deleted (the sacred-raw invariant, upheld end to end).
+- **Look.** Warm paper light/dark palette (warm charcoal `#1b1a18`, not
+  blue-black), friendlier blue-violet accent, amber reminders. Note text is now a
+  readable sans, not monospace. Whole-card color by category (user colors from
+  Settings, else a stable auto palette) with a colored left edge, so the board
+  reads by zone. Login page reskinned to match. No third-party JS at all (Muuri
+  and `board-piles.js` removed).
+- **Model.** Migration 4 adds `board_layout.seq` (order within a merged group)
+  and retires old piles (cleared on upgrade -- a loose stack has no faithful
+  ordered-merge mapping). `save_groups(groups)` replaces `save_positions` and
+  `save_piles`; it rebuilds `board_piles` + `board_layout.pile_id/seq` in one
+  transaction, groups are disjoint, `<2`-member groups dropped. `POST /board/groups`
+  replaces `/board/positions` and `/board/piles`; `board_notes` carries
+  `pile_id` + `seq`. Merge grouping is durable (reindex-safe); delete still cascades.
+
+Gate evidence:
+- 5 tasks tracked; plan carried in this entry and the W8 preview artifact.
+- Independent cold review: no HIGH/Critical. Confirmed merge/snip never touch the
+  `notes` table and `delete_note` is the only destructive path (CSRF-guarded;
+  two-step confirm for merged cards). One MEDIUM fixed: migration 4's `ALTER` was
+  not idempotent, breaking the repo's crash-recovery contract -- the runner now
+  tolerates a duplicate-column re-run, and migration 4 orders its idempotent
+  resets before the `ALTER`. Two LOWs fixed: old piles are now explicitly cleared
+  on upgrade (no silent arbitrary-order conversion), and `save_groups` enforces
+  cross-group disjointness. XSS clean: note text via `textContent` only.
+- Auth/CSRF on `/board/groups`; malformed/non-list body -> 400; merge order and
+  snip round-trip through storage and the endpoint; reindex preserves groups;
+  raw notes byte-for-byte unchanged by a merge (test).
+
+Verification note: no sqlite-vec or browser in the build environment. The route
+table, AuthGuard, CSRF, the `/board/notes` shape, and the full merge/snip contract
+are verified in-session by driving the real app through a minimal ASGI harness
+with fake storage; migration 4 (incl. old-pile clearing and re-run tolerance) and
+the client card/merge/snip algorithms are verified with standalone SQLite and
+`node` harnesses (board JS also passes `node --check`). The live drag-to-merge,
+snip, theming, and card colors are user-verified on Windows. Run the suite with
+sqlite-vec before merge.
+
+Known limitation: drag-to-merge uses HTML5 drag-and-drop, which does not fire on
+touch screens; merging is a desktop gesture for now.
+
+Not in W8 (by design): touch-drag merging; per-note color overrides; live
+re-fetch of notes added elsewhere while the board is open (still reloads on
+add/delete only, to avoid clobbering an unsaved local merge).
+
 ## 2026-10-12: W7: Clickable tags + Settings & colors
 
 Branch `feat/w7-tags-settings` (off `feat/w6-saved-boards`). (1) Clicking a `#tag`
