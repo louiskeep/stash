@@ -6,35 +6,45 @@
   <title>Sign in to stash</title>
   <style>
     :root {
-      --paper: #fbfbfa; --ink: #1a1a1a; --ink-soft: #5c5c58; --line: #e1e0db;
-      --accent: #3b4cca; --bad: #a3303a;
-      --ui: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      --paper: #faf8f4; --card: #fffdf8; --ink: #2b2823; --ink-soft: #6b645a;
+      --ink-faint: #a79f92; --line: #e7e1d6;
+      --accent: #5b5bd6; --accent-ink: #ffffff; --accent-soft: #edecfb; --bad: #b2483f;
+      --shadow: 0 2px 4px rgba(60,48,30,.06), 0 18px 40px -20px rgba(60,48,30,.4);
+      --ui: "Inter", ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
     }
     @media (prefers-color-scheme: dark) {
       :root:not([data-theme="light"]) {
-        --paper: #141412; --ink: #e9e8e4; --ink-soft: #a0a09a; --line: #30302b;
-        --accent: #9aa6ff; --bad: #e2808a; color-scheme: dark;
+        --paper: #1b1a18; --card: #26231f; --ink: #efe9df; --ink-soft: #b3aa9b;
+        --ink-faint: #7c7366; --line: #36332c;
+        --accent: #9b9bf0; --accent-ink: #1b1a18; --accent-soft: #2c2a3f; --bad: #e59289;
+        --shadow: 0 2px 4px rgba(0,0,0,.4), 0 20px 44px -22px rgba(0,0,0,.7); color-scheme: dark;
       }
     }
     :root[data-theme="dark"] {
-      --paper: #141412; --ink: #e9e8e4; --ink-soft: #a0a09a; --line: #30302b;
-      --accent: #9aa6ff; --bad: #e2808a; color-scheme: dark;
+      --paper: #1b1a18; --card: #26231f; --ink: #efe9df; --ink-soft: #b3aa9b;
+      --ink-faint: #7c7366; --line: #36332c;
+      --accent: #9b9bf0; --accent-ink: #1b1a18; --accent-soft: #2c2a3f; --bad: #e59289;
+      --shadow: 0 2px 4px rgba(0,0,0,.4), 0 20px 44px -22px rgba(0,0,0,.7); color-scheme: dark;
     }
     * { box-sizing: border-box; }
     body { margin: 0; min-height: 100vh; background: var(--paper); color: var(--ink);
       font-family: var(--ui); display: grid; place-items: center; padding: 1rem; }
-    .signin { width: 100%; max-width: 20rem; }
-    .brand { font-size: 2rem; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 0.25rem; }
+    .signin { width: 100%; max-width: 21rem; background: var(--card); border: 1px solid var(--line);
+      border-radius: 16px; box-shadow: var(--shadow); padding: 1.8rem 1.6rem; }
+    .brand { font-size: 1.9rem; font-weight: 600; letter-spacing: -0.02em; margin: 0 0 0.3rem; }
     .brand .dot { color: var(--accent); }
-    .muted { color: var(--ink-soft); margin: 0 0 1.25rem; }
-    .error { color: var(--bad); }
-    form { display: flex; flex-direction: column; gap: 0.6rem; }
-    input[type=password] { width: 100%; padding: 0.55rem 0.7rem; border: 1px solid var(--line);
-      border-radius: 6px; background: var(--paper); color: var(--ink); font: inherit; }
+    .muted { color: var(--ink-soft); margin: 0 0 1.4rem; font-size: 0.92rem; }
+    .error { color: var(--bad); margin: 0 0 0.9rem; font-size: 0.88rem; }
+    form { display: flex; flex-direction: column; gap: 0.7rem; }
+    input[type=password] { width: 100%; padding: 0.62rem 0.8rem; border: 1px solid var(--line);
+      border-radius: 10px; background: var(--paper); color: var(--ink); font: inherit; outline: none; }
+    input[type=password]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
     input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-    button { padding: 0.55rem 0.9rem; border: 1px solid var(--accent); border-radius: 6px;
-      background: var(--accent); color: #fff; font: inherit; cursor: pointer; }
-    button:hover { filter: brightness(1.05); }
+    button { padding: 0.62rem 0.9rem; border: 1px solid var(--accent); border-radius: 10px;
+      background: var(--accent); color: var(--accent-ink); font: inherit; font-weight: 500; cursor: pointer;
+      transition: filter .12s, transform .08s; }
+    button:hover { filter: brightness(1.04); }
+    button:active { transform: translateY(1px); }
   </style>
 </head>
 <body>

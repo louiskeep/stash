@@ -1,6 +1,5 @@
-"""Tasks 1-2: board JSON endpoint and the CSRF-protected save/add/delete routes."""
+"""Board JSON endpoint and the CSRF-protected groups/add/delete routes."""
 
-import json
 from datetime import datetime, timezone
 
 from stash.capture import capture
@@ -11,14 +10,17 @@ def _now():
     return datetime.now(timezone.utc).isoformat()
 
 
-async def test_board_notes_returns_notes_and_piles(client, storage, embedder):
+async def test_board_notes_returns_notes(client, storage, embedder):
     capture(storage, embedder, "invoice @work #billing", "web", _now())
     await login(client)
     r = await client.get("/board/notes")
     assert r.status_code == 200
     data = r.json()
-    assert "notes" in data and "piles" in data
+    assert "notes" in data
     assert any("invoice" in n["raw"] for n in data["notes"])
+    # Each note carries its merge-group membership for the client to reconstruct.
+    n = data["notes"][0]
+    assert "pile_id" in n and "seq" in n
 
 
 async def test_board_notes_script_is_data_not_html(client, storage, embedder):
@@ -39,35 +41,56 @@ async def test_board_notes_requires_auth(client, storage, embedder):
     assert "secret note" not in r.text
 
 
-async def test_positions_save_with_csrf(client, storage, embedder):
-    nid = capture(storage, embedder, "a note", "web", _now()).note_id
+async def test_groups_save_with_csrf(client, storage, embedder):
+    a = capture(storage, embedder, "note a", "web", _now()).note_id
+    b = capture(storage, embedder, "note b", "web", _now()).note_id
     csrf = await login(client)
-    r = await client.post("/board/positions",
-                          headers={"x-csrf-token": csrf},
-                          json={"positions": [{"note_id": nid, "x": 12, "y": 34, "z": 1}]})
-    assert r.status_code == 200 and r.json()["written"] == 1
-    # Position is readable back.
-    notes = (await client.get("/board/notes")).json()["notes"]
-    saved = next(n for n in notes if n["id"] == nid)
-    assert saved["x"] == 12 and saved["y"] == 34
+    r = await client.post("/board/groups", headers={"x-csrf-token": csrf},
+                          json={"groups": [[a, b]]})
+    assert r.status_code == 200 and r.json()["groups"] == 1
+    notes = {n["id"]: n for n in (await client.get("/board/notes")).json()["notes"]}
+    # Both notes land in the same group, in order (seq 0 then 1).
+    assert notes[a]["pile_id"] is not None
+    assert notes[a]["pile_id"] == notes[b]["pile_id"]
+    assert notes[a]["seq"] == 0 and notes[b]["seq"] == 1
 
 
-async def test_positions_bad_csrf_rejected(client, storage, embedder):
-    nid = capture(storage, embedder, "a note", "web", _now()).note_id
+async def test_groups_snip_round_trips(client, storage, embedder):
+    a = capture(storage, embedder, "a", "web", _now()).note_id
+    b = capture(storage, embedder, "b", "web", _now()).note_id
+    csrf = await login(client)
+    # Merge, then snip apart: the client re-sends the full layout (now empty).
+    await client.post("/board/groups", headers={"x-csrf-token": csrf},
+                      json={"groups": [[a, b]]})
+    await client.post("/board/groups", headers={"x-csrf-token": csrf},
+                      json={"groups": []})
+    notes = {n["id"]: n for n in (await client.get("/board/notes")).json()["notes"]}
+    assert notes[a]["pile_id"] is None and notes[b]["pile_id"] is None
+
+
+async def test_groups_bad_csrf_rejected(client, storage, embedder):
+    a = capture(storage, embedder, "a", "web", _now()).note_id
+    b = capture(storage, embedder, "b", "web", _now()).note_id
     await login(client)
-    r = await client.post("/board/positions",
-                          headers={"x-csrf-token": "bogus"},
-                          json={"positions": [{"note_id": nid, "x": 1, "y": 2}]})
+    r = await client.post("/board/groups", headers={"x-csrf-token": "bogus"},
+                          json={"groups": [[a, b]]})
     assert r.status_code == 403
-    notes = (await client.get("/board/notes")).json()["notes"]
-    assert next(n for n in notes if n["id"] == nid)["x"] is None  # not written
+    notes = {n["id"]: n for n in (await client.get("/board/notes")).json()["notes"]}
+    assert notes[a]["pile_id"] is None  # not written
 
 
-async def test_positions_malformed_body_is_400(client):
+async def test_groups_malformed_body_is_400(client):
     csrf = await login(client)
-    r = await client.post("/board/positions",
+    r = await client.post("/board/groups",
                           headers={"x-csrf-token": csrf, "content-type": "application/json"},
                           content="not json")
+    assert r.status_code == 400
+
+
+async def test_groups_non_list_is_400(client):
+    csrf = await login(client)
+    r = await client.post("/board/groups", headers={"x-csrf-token": csrf},
+                          json={"groups": "nope"})
     assert r.status_code == 400
 
 
@@ -107,36 +130,10 @@ async def test_delete_bad_csrf_does_not_delete(client, storage, embedder):
     assert storage.get_note(nid) is not None  # still there
 
 
-async def test_piles_and_delete_bad_csrf(client, storage, embedder):
+async def test_groups_and_add_bad_csrf(client, storage, embedder):
     a = capture(storage, embedder, "a", "web", _now()).note_id
     await login(client)
-    for path, body in [("/board/piles", {"piles": [], "assignments": {}}),
+    for path, body in [("/board/groups", {"groups": [[a]]}),
                        ("/board/add", {"text": "x"})]:
         r = await client.post(path, headers={"x-csrf-token": "bad"}, json=body)
         assert r.status_code == 403
-
-
-async def test_position_save_preserves_pile(client, storage, embedder):
-    a = capture(storage, embedder, "a #p", "web", _now()).note_id
-    b = capture(storage, embedder, "b #p", "web", _now()).note_id
-    csrf = await login(client)
-    await client.post("/board/piles", headers={"x-csrf-token": csrf},
-                      json={"piles": [{"client_id": "1", "label": "#p"}],
-                            "assignments": {str(a): "1", str(b): "1"}})
-    # A position save (every drag) must not clear pile membership.
-    await client.post("/board/positions", headers={"x-csrf-token": csrf},
-                      json={"positions": [{"note_id": a, "x": 5, "y": 6, "z": 0}]})
-    notes = {n["id"]: n for n in (await client.get("/board/notes")).json()["notes"]}
-    assert notes[a]["pile_id"] is not None and notes[a]["x"] == 5
-
-
-async def test_piles_save_with_csrf(client, storage, embedder):
-    a = capture(storage, embedder, "note a", "web", _now()).note_id
-    b = capture(storage, embedder, "note b", "web", _now()).note_id
-    csrf = await login(client)
-    r = await client.post("/board/piles", headers={"x-csrf-token": csrf},
-                          json={"piles": [{"client_id": "p1", "label": "pile one"}],
-                                "assignments": {str(a): "p1", str(b): "p1"}})
-    assert r.status_code == 200
-    notes = {n["id"]: n for n in (await client.get("/board/notes")).json()["notes"]}
-    assert notes[a]["pile_id"] is not None and notes[a]["pile_id"] == notes[b]["pile_id"]

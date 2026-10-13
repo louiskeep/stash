@@ -397,15 +397,15 @@ class Storage:
     # written by the user dragging and stacking notes on the canvas.
 
     def board_notes(self) -> list[dict]:
-        """Every note with the fields the canvas needs: raw, created_at, source,
+        """Every note with the fields the board needs: raw, created_at, source,
         its tags and category, a pending reminder's fire_at (the timer), and its
-        saved board position (x/y/z/pile) when it has one. Returns plain dicts so
-        the JSON endpoint can serialize them directly; note text is a data value,
-        never interpolated into HTML."""
+        merged-group membership (pile_id + seq) when it is part of a merged card.
+        Returns plain dicts so the JSON endpoint can serialize them directly; note
+        text is a data value, never interpolated into HTML."""
         notes = self.conn.execute(
             "SELECT n.id, n.raw, n.source, n.created_at,"
             "       m.category,"
-            "       b.x, b.y, b.z, b.pile_id,"
+            "       b.pile_id, b.seq,"
             "       r.fire_at AS timer, r.status AS timer_status"
             " FROM notes n"
             " LEFT JOIN note_meta m ON m.note_id = n.id"
@@ -426,86 +426,61 @@ class Storage:
                 "category": n["category"],
                 "tags": tags_by_note.get(n["id"], []),
                 "timer": n["timer"] if n["timer_status"] == "pending" else None,
-                "x": n["x"], "y": n["y"], "z": n["z"] if n["z"] is not None else 0,
                 "pile_id": n["pile_id"],
+                "seq": n["seq"] if n["seq"] is not None else 0,
             })
         return out
 
-    def board_piles(self) -> list[sqlite3.Row]:
-        return self.conn.execute(
-            "SELECT id, label, collapsed FROM board_piles ORDER BY id"
-        ).fetchall()
+    def save_groups(self, groups) -> int:
+        """Replace the merged-note groups. `groups` is a list of ordered note-id
+        lists; a list of two or more notes becomes one merged card, in order
+        (index 0 = the top segment). Notes not listed, or alone in a list, are
+        standalone cards. Rebuilds board_piles and board_layout.pile_id/seq in one
+        transaction, and returns the number of groups written.
 
-    def save_positions(self, positions) -> int:
-        """Upsert board positions. `positions` is an iterable of mappings with
-        note_id and x/y/z. A position for a note that does not exist is ignored
-        rather than raising. Returns the count written.
-
-        This only touches x/y/z, never pile_id: pile membership is owned solely
-        by save_piles, so a position save (which happens on every drag release)
-        can never clobber a note's pile. On a first insert pile_id defaults to
-        NULL from the schema; on update it is left as-is.
-        """
+        A merge is a grouping, never a rewrite: each note's raw stays its own
+        untouched row, so a merged card is fully reversible by snipping. This is
+        durable state (like saved boards); a reindex never touches it. Unknown
+        note ids are ignored rather than raising."""
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc).isoformat()
         written = 0
         with self.conn:
-            for p in positions:
-                try:
-                    nid = int(p["note_id"])
-                except (KeyError, TypeError, ValueError):
+            # Detach every note first, then rebuild the groups. Deleting a group
+            # row SET NULLs its members via FK, but we clear explicitly so a
+            # removed group leaves no dangling reference even mid-rebuild.
+            self.conn.execute("UPDATE board_layout SET pile_id = NULL, seq = 0")
+            self.conn.execute("DELETE FROM board_piles")
+            for group in groups:
+                if not isinstance(group, (list, tuple)):
                     continue
-                if self.get_note(nid) is None:
-                    continue  # unknown note id: ignore, do not error
-                self.conn.execute(
-                    "INSERT INTO board_layout(note_id, x, y, z, updated_at)"
-                    " VALUES (?,?,?,?,?)"
-                    " ON CONFLICT(note_id) DO UPDATE SET"
-                    " x=excluded.x, y=excluded.y, z=excluded.z,"
-                    " updated_at=excluded.updated_at",
-                    (nid, p.get("x"), p.get("y"), p.get("z", 0), now),
+                ids: list[int] = []
+                for raw_id in group:
+                    try:
+                        nid = int(raw_id)
+                    except (TypeError, ValueError):
+                        continue
+                    if self.get_note(nid) is not None and nid not in ids:
+                        ids.append(nid)
+                if len(ids) < 2:
+                    continue  # a group needs at least two real notes
+                cur = self.conn.execute(
+                    "INSERT INTO board_piles(label, collapsed, updated_at)"
+                    " VALUES ('', 0, ?)",
+                    (now,),
                 )
+                pid = cur.lastrowid
+                for seq, nid in enumerate(ids):
+                    self.conn.execute(
+                        "INSERT INTO board_layout(note_id, pile_id, seq, updated_at)"
+                        " VALUES (?,?,?,?)"
+                        " ON CONFLICT(note_id) DO UPDATE SET"
+                        " pile_id=excluded.pile_id, seq=excluded.seq,"
+                        " updated_at=excluded.updated_at",
+                        (nid, pid, seq, now),
+                    )
                 written += 1
         return written
-
-    def save_piles(self, piles, assignments) -> dict:
-        """Replace the pile set and reassign notes.
-
-        `piles` is a list of {client_id, label, collapsed}; `assignments` maps
-        note_id to a client_id (or None to unpile). Rebuilds board_piles and sets
-        board_layout.pile_id accordingly, in one transaction. Returns a map from
-        each client_id to the new database pile id."""
-        from datetime import datetime, timezone
-        now = datetime.now(timezone.utc).isoformat()
-        client_to_id: dict = {}
-        with self.conn:
-            # Detach all notes, then rebuild piles, then reassign. Deleting a
-            # pile SET NULLs its members via FK, but we clear explicitly so a
-            # removed pile leaves no dangling reference even mid-rebuild.
-            self.conn.execute("UPDATE board_layout SET pile_id = NULL")
-            self.conn.execute("DELETE FROM board_piles")
-            for p in piles:
-                cur = self.conn.execute(
-                    "INSERT INTO board_piles(label, collapsed, updated_at) VALUES (?,?,?)",
-                    (p.get("label") or "", 1 if p.get("collapsed") else 0, now),
-                )
-                client_to_id[p.get("client_id")] = cur.lastrowid
-            for note_id, client_id in assignments.items():
-                pid = client_to_id.get(client_id)
-                try:
-                    nid = int(note_id)
-                except (TypeError, ValueError):
-                    continue
-                if pid is None or self.get_note(nid) is None:
-                    continue
-                self.conn.execute(
-                    "INSERT INTO board_layout(note_id, pile_id, updated_at)"
-                    " VALUES (?,?,?)"
-                    " ON CONFLICT(note_id) DO UPDATE SET"
-                    " pile_id=excluded.pile_id, updated_at=excluded.updated_at",
-                    (nid, pid, now),
-                )
-        return client_to_id
 
     def delete_note(self, note_id) -> bool:
         """Delete a note and everything derived or attached to it (tags, meta,

@@ -9,7 +9,7 @@ import pytest
 
 GET_ROUTES = ["/", "/board/notes", "/board/search?q=milk", "/board/boards",
               "/board/settings"]
-POST_ROUTES = ["/logout", "/board/positions", "/board/piles",
+POST_ROUTES = ["/logout", "/board/groups",
                "/board/add", "/board/delete", "/board/boards",
                "/board/boards/delete", "/board/settings"]
 OPEN_ROUTES = ["/healthz", "/login", "/static/board.css"]

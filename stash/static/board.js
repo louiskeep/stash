@@ -1,38 +1,35 @@
-/* stash board: canvas of draggable paper notes, backed by the server.
+/* stash board: an ordered grid of paper notes, backed by the server.
  *
- * Boots from GET /board/notes, builds the board with Muuri, and saves position,
- * pile, add, and delete changes back through the CSRF-protected POST endpoints.
+ * Boots from GET /board/notes, lays the notes out as a CSS grid ordered by time,
+ * and saves merges, adds, and deletes back through the CSRF-protected POST
+ * endpoints. A card is one note, or several notes merged into one: drag a note
+ * onto another's top or bottom half to combine them in that order, and click the
+ * dashed divider in a merged card to snip it apart again. Merging never rewrites
+ * a note -- each raw note stays its own row, so a merge is a reversible grouping.
+ *
  * Note text is always placed with textContent, never innerHTML, so markup in a
- * note can never execute. Layout persists server-side, so the board is the same
- * on any device.
- *
- * Muuri (the drag/grid library) is expected as a global `Muuri`. The template
- * loads it before this script.
+ * note can never execute.
  */
 (function () {
   "use strict";
 
   var CSRF = (document.querySelector('meta[name="csrf-token"]') || {}).content || "";
   var MIN = 60000, HOUR = 3600000, DAY = 86400000;
-  var TINTS = ["a", "b", "c", "d", "e"];
 
   var grid = document.getElementById("grid");
   var hint = document.getElementById("hint");
   var wrap = document.getElementById("wrap");
 
-  // Muuri is vendored at /static/muuri.min.js (never a runtime CDN). If it is
-  // missing, say so clearly instead of failing silently.
-  if (typeof Muuri === "undefined") {
-    hint.textContent = "The board needs its drag library. Download Muuri 0.9.5 "
-      + "to stash/static/muuri.min.js (see stash/static/README.md), then reload.";
-    hint.hidden = false;
-    return;
-  }
-  var muuri = null;
-
   // searchIds: null = search inactive (show all); a Set = only these ids match.
-  var state = { notes: [], piles: [], order: "newest", tag: null, cat: null,
-                searchIds: null, from: null, to: null };
+  // notes: flat list from the server. cards: the merge layout, each { ids:[..] }
+  // in top-to-bottom order; a one-id card is a standalone note.
+  var state = { notes: [], byId: {}, cards: [], order: "newest",
+                tag: null, cat: null, searchIds: null, from: null, to: null };
+
+  // Auto palette: a stable color per category/tag when the user has not chosen
+  // one in Settings. Hues chosen to sit well on warm paper in both themes.
+  var PALETTE = ["#5b5bd6", "#2f8fa8", "#c77d12", "#3a9b6e", "#c7568f",
+                 "#5f7194", "#7b61d6", "#b5882a"];
 
   // --- helpers -----------------------------------------------------------
   function api(path, body) {
@@ -44,7 +41,7 @@
   }
   function toast(msg) {
     var t = document.createElement("div"); t.className = "toast"; t.textContent = msg;
-    wrap.appendChild(t); requestAnimationFrame(function () { t.classList.add("show"); });
+    document.body.appendChild(t); requestAnimationFrame(function () { t.classList.add("show"); });
     setTimeout(function () { t.classList.remove("show"); setTimeout(function () { t.remove(); }, 250); }, 1600);
   }
   function ago(t) {
@@ -60,53 +57,56 @@
     if (d < DAY) return "in " + Math.round(d / HOUR) + "h";
     return "in " + Math.round(d / DAY) + "d";
   }
-  function tintFor(n) {
-    var key = n.category || (n.tags[0] || "x"); var h = 0;
-    for (var i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) | 0;
-    return TINTS[Math.abs(h) % TINTS.length];
+  function noteById(id) { return state.byId[id]; }
+  function hash(s) { var h = 0; s = String(s); for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return Math.abs(h); }
+
+  // chipColors (from Settings) win; otherwise a stable palette color.
+  var chipColors = {};  // "tag:x" / "cat:y" -> "#rrggbb"
+  function colorFor(prefix, val) {
+    if (!val) return null;
+    var hex = chipColors[prefix + ":" + val];
+    return hex || PALETTE[hash(prefix + val) % PALETTE.length];
   }
-  function rot(id) { var r = ((id * 2654435761) % 1000) / 1000; return (r * 2.4 - 1.2).toFixed(2); }
+  function catColor(cat) { return colorFor("cat", cat); }
+  function tagColor(tag) { return colorFor("tag", tag); }
 
-  // --- note element (textContent only) -----------------------------------
-  function noteEl(n) {
-    var item = document.createElement("div");
-    item.className = "item"; item.dataset.id = n.id;
-
-    var note = document.createElement("div");
-    note.className = "note " + tintFor(n);
-    note.style.setProperty("--rot", rot(n.id) + "deg");
-
-    var del = document.createElement("button");
-    del.className = "del"; del.type = "button"; del.title = "Delete"; del.textContent = "×";
-    del.addEventListener("click", function (e) { e.stopPropagation(); removeNote(n.id); });
-
-    var raw = document.createElement("p");
-    raw.className = "raw"; raw.textContent = n.raw;          // <- never innerHTML
-
-    var foot = document.createElement("div"); foot.className = "foot";
-    var time = document.createElement("time"); time.textContent = ago(n.created_at); foot.appendChild(time);
-    if (n.category) {
-      var c = document.createElement("button"); c.type = "button"; c.className = "c chipbtn";
-      c.textContent = "@" + n.category; applyChipColor(c, "cat:" + n.category);
-      c.addEventListener("click", function (e) { e.stopPropagation(); filterByCategory(n.category); });
-      foot.appendChild(c);
-    }
-    (n.tags || []).forEach(function (t) {
-      var s = document.createElement("button"); s.type = "button"; s.className = "t chipbtn";
-      s.textContent = "#" + t; applyChipColor(s, "tag:" + t);
-      s.addEventListener("click", function (e) { e.stopPropagation(); filterByTag(t); });
-      foot.appendChild(s);
+  // --- cards model -------------------------------------------------------
+  function buildCards() {
+    // Reconstruct merged cards from each note's pile_id + seq, standalone notes
+    // for the rest. The order within a group is seq (0 = top segment).
+    var byPile = {};
+    state.notes.forEach(function (n) {
+      if (n.pile_id != null) (byPile[n.pile_id] = byPile[n.pile_id] || []).push(n);
     });
-    if (n.timer) { var tm = document.createElement("span"); tm.className = "timer"; tm.textContent = until(n.timer); foot.appendChild(tm); }
+    var grouped = {}, cards = [];
+    Object.keys(byPile).forEach(function (pid) {
+      var members = byPile[pid].slice().sort(function (a, b) { return (a.seq || 0) - (b.seq || 0); });
+      if (members.length >= 2) {
+        cards.push({ ids: members.map(function (n) { return n.id; }) });
+        members.forEach(function (n) { grouped[n.id] = 1; });
+      }
+    });
+    state.notes.forEach(function (n) { if (!grouped[n.id]) cards.push({ ids: [n.id] }); });
+    state.cards = cards;
+  }
+  function cardByKey(key) {
+    return state.cards.find(function (c) { return String(c.ids[0]) === String(key); });
+  }
+  function cardTime(card) {
+    var times = card.ids.map(function (id) { var n = noteById(id); return n ? new Date(n.created_at).getTime() : 0; });
+    return state.order === "newest" ? Math.max.apply(null, times) : Math.min.apply(null, times);
+  }
 
-    note.appendChild(del); note.appendChild(raw); note.appendChild(foot);
-    item.appendChild(note);
-    return item;
+  function persist() {
+    var groups = state.cards.filter(function (c) { return c.ids.length >= 2; })
+      .map(function (c) { return c.ids; });
+    api("/board/groups", { groups: groups }).then(function (r) { if (!r.ok) throw 0; })
+      .catch(function () { toast("Could not save layout"); });
   }
 
   // --- filtering ---------------------------------------------------------
-  // All active filters stack (AND): a note shows only if it passes every one.
-  // An empty control does not narrow.
+  // All active filters stack (AND) at the note level. A card shows if ANY of its
+  // notes passes, so a merged card is treated as one atomic unit.
   function passes(n) {
     if (state.searchIds !== null && !state.searchIds.has(n.id)) return false;
     if (state.tag && (n.tags || []).indexOf(state.tag) === -1) return false;
@@ -118,115 +118,216 @@
     }
     return true;
   }
-  function applyFilter() {
-    if (!muuri) return;
-    var show = [], hide = [];
-    muuri.getItems().forEach(function (it) {
-      var id = +it.getElement().dataset.id;
-      var n = state.notes.find(function (x) { return x.id === id; });
-      (n && passes(n) ? show : hide).push(it);
+  function cardPasses(card) {
+    return card.ids.some(function (id) { var n = noteById(id); return n && passes(n); });
+  }
+
+  // --- rendering ---------------------------------------------------------
+  function cardEl(card) {
+    var ids = card.ids;
+    var topNote = noteById(ids[0]);
+    var el = document.createElement("div");
+    el.className = "card pop"; el.draggable = true; el.dataset.card = ids[0];
+    var col = topNote && topNote.category ? catColor(topNote.category) : null;
+    if (col) el.style.setProperty("--cat", col);
+
+    el.appendChild(delButton(card));
+
+    // reminder tab: the soonest pending timer among members
+    var timed = ids.map(noteById).filter(function (n) { return n && n.timer; })
+      .sort(function (a, b) { return new Date(a.timer) - new Date(b.timer); });
+    if (timed.length) {
+      var rt = document.createElement("span"); rt.className = "remind-tab";
+      rt.appendChild(icon("clock"));
+      rt.appendChild(document.createTextNode(until(timed[0].timer)));
+      el.appendChild(rt);
+    }
+
+    ids.forEach(function (id, i) {
+      if (i > 0) el.appendChild(snipEl(card, i));
+      var n = noteById(id);
+      var seg = document.createElement("div"); seg.className = "seg";
+      seg.textContent = n ? n.raw : "";          // <- never innerHTML
+      el.appendChild(seg);
     });
-    muuri.show(show); muuri.hide(hide);
-    hint.hidden = show.length !== 0;
+
+    el.appendChild(metaEl(card));
+    wireDrag(el);
+    return el;
+  }
+
+  function delButton(card) {
+    var del = document.createElement("button");
+    del.className = "del"; del.type = "button"; del.title = "Delete"; del.textContent = "×";
+    var armed = false, resetTimer = null;
+    del.addEventListener("click", function (e) {
+      e.stopPropagation();
+      if (card.ids.length === 1) { deleteNotes(card.ids); return; }
+      // Merged card: two-step confirm so several raw notes are never lost by a
+      // stray click. First click arms, second within 2.5s deletes them all.
+      if (!armed) {
+        armed = true; del.classList.add("armed"); del.textContent = "Delete " + card.ids.length + "?";
+        resetTimer = setTimeout(function () {
+          armed = false; del.classList.remove("armed"); del.textContent = "×";
+        }, 2500);
+        return;
+      }
+      if (resetTimer) clearTimeout(resetTimer);
+      deleteNotes(card.ids.slice());
+    });
+    return del;
+  }
+
+  function snipEl(card, i) {
+    var snip = document.createElement("div");
+    snip.className = "snip"; snip.title = "Snip apart here"; snip.tabIndex = 0;
+    snip.setAttribute("role", "button"); snip.setAttribute("aria-label", "Separate notes here");
+    var lbl = document.createElement("span"); lbl.className = "lbl";
+    lbl.appendChild(icon("scissors")); lbl.appendChild(document.createTextNode("separate"));
+    snip.appendChild(lbl);
+    snip.addEventListener("click", function (e) { e.stopPropagation(); snipAt(card, i); });
+    snip.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); snipAt(card, i); } });
+    snip.addEventListener("dragstart", function (e) { e.preventDefault(); e.stopPropagation(); });
+    return snip;
+  }
+
+  function metaEl(card) {
+    var meta = document.createElement("div"); meta.className = "meta";
+    if (card.ids.length > 1) {
+      var m = document.createElement("span"); m.className = "merged";
+      m.appendChild(icon("merge")); m.appendChild(document.createTextNode(String(card.ids.length)));
+      meta.appendChild(m);
+    }
+    // union of categories then tags across members, de-duped, clickable.
+    var seen = {};
+    card.ids.map(noteById).forEach(function (n) {
+      if (n && n.category && !seen["c" + n.category]) { seen["c" + n.category] = 1; meta.appendChild(chipEl("cat", n.category)); }
+    });
+    card.ids.map(noteById).forEach(function (n) {
+      if (!n) return;
+      (n.tags || []).forEach(function (t) { if (!seen["t" + t]) { seen["t" + t] = 1; meta.appendChild(chipEl("tag", t)); } });
+    });
+    var time = document.createElement("span"); time.className = "time";
+    var top = noteById(card.ids[0]); if (top) time.textContent = ago(top.created_at);
+    meta.appendChild(time);
+    return meta;
+  }
+
+  function chipEl(kind, val) {
+    var color = kind === "cat" ? catColor(val) : tagColor(val);
+    var b = document.createElement("button"); b.type = "button"; b.className = "chip " + kind;
+    b.textContent = val;
+    if (color) {
+      b.style.background = "color-mix(in srgb, " + color + " 16%, var(--surface))";
+      b.style.borderColor = "color-mix(in srgb, " + color + " 38%, var(--line))";
+    }
+    b.addEventListener("click", function (e) {
+      e.stopPropagation();
+      if (kind === "cat") filterByCategory(val); else filterByTag(val);
+    });
+    return b;
+  }
+
+  // small inline icons (no external assets)
+  function icon(name) {
+    var ns = "http://www.w3.org/2000/svg";
+    var svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", "0 0 24 24"); svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor"); svg.setAttribute("stroke-width", "2");
+    svg.setAttribute("stroke-linecap", "round"); svg.setAttribute("stroke-linejoin", "round");
+    var paths = {
+      clock: ["M12 12V7", "M12 12l3 2"], // plus a circle added below
+      scissors: ["M20 4 8.5 15.5", "M8 8 20 20", "M9.5 15.5 20 4"],
+      merge: ["M7 4v6a4 4 0 0 0 4 4h6", "m14 11 3 3-3 3"]
+    };
+    if (name === "clock") {
+      var c = document.createElementNS(ns, "circle");
+      c.setAttribute("cx", "12"); c.setAttribute("cy", "12"); c.setAttribute("r", "9"); svg.appendChild(c);
+    }
+    if (name === "scissors") {
+      [[6, 6], [6, 18]].forEach(function (p) {
+        var c = document.createElementNS(ns, "circle");
+        c.setAttribute("cx", p[0]); c.setAttribute("cy", p[1]); c.setAttribute("r", "3"); svg.appendChild(c);
+      });
+    }
+    (paths[name] || []).forEach(function (d) {
+      var p = document.createElementNS(ns, "path"); p.setAttribute("d", d); svg.appendChild(p);
+    });
+    return svg;
+  }
+
+  function cardsForDisplay() {
+    return state.cards.filter(cardPasses).sort(function (a, b) {
+      var ta = cardTime(a), tb = cardTime(b);
+      return state.order === "newest" ? tb - ta : ta - tb;
+    });
+  }
+  function render() {
+    var list = cardsForDisplay();
+    grid.innerHTML = "";
+    list.forEach(function (card) { grid.appendChild(cardEl(card)); });
+    hint.hidden = list.length !== 0;
     buildRail();
   }
-  function sortNotes(a, b) {
-    var ta = new Date(a.created_at).getTime(), tb = new Date(b.created_at).getTime();
-    return state.order === "newest" ? tb - ta : ta - tb;
-  }
 
-  // --- board build -------------------------------------------------------
-  // Free-canvas layout: a note with saved x/y keeps exactly that spot across
-  // reloads and devices; a note without saved coordinates (brand new) flows into
-  // the first open grid slot so it is never dropped off-screen. This is what
-  // makes the arrangement persist -- Muuri's default grid would re-flow every
-  // note by order and discard saved positions.
-  function posFor(id) {
-    var n = state.notes.find(function (x) { return x.id === id; });
-    return n && n.x != null && n.y != null ? { x: n.x, y: n.y } : null;
+  // --- drag to merge -----------------------------------------------------
+  var dragKey = null;
+  function clearOver() {
+    grid.querySelectorAll(".card.over-top, .card.over-bottom").forEach(function (el) {
+      el.classList.remove("over-top", "over-bottom");
+    });
   }
-
-  function customLayout(gridInst, layoutId, items, width, height, callback) {
-    var COL = 224, ROW = 150, pad = 8; // flow step for unplaced notes
-    var cols = Math.max(1, Math.floor((width - pad) / COL));
-    var slots = [];
-    var maxY = 0, flow = 0;
-    for (var i = 0; i < items.length; i++) {
-      var id = +items[i].getElement().dataset.id;
-      var saved = posFor(id);
-      var itemW = items[i].getWidth ? items[i].getWidth() : 208;
-      // Clamp x to the visible width so no card sits off the right edge: the
-      // board scrolls vertically only, never horizontally.
-      var maxX = Math.max(pad, width - itemW - pad);
-      var x, y;
-      if (saved) { x = Math.max(pad, Math.min(saved.x, maxX)); y = Math.max(pad, saved.y); }
-      else {
-        x = pad + (flow % cols) * COL;
-        y = pad + Math.floor(flow / cols) * ROW;
-        flow++;
-      }
-      slots.push(x, y);
-      if (y + ROW > maxY) maxY = y + ROW;
-    }
-    callback({
-      id: layoutId, items: items, slots: slots,
-      styles: { width: "100%", height: Math.max(height, maxY + 40) + "px" }
+  function wireDrag(el) {
+    el.addEventListener("dragstart", function (e) {
+      dragKey = el.dataset.card; el.classList.add("dragging");
+      try { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", el.dataset.card); } catch (x) {}
+    });
+    el.addEventListener("dragend", function () { el.classList.remove("dragging"); clearOver(); dragKey = null; });
+    el.addEventListener("dragover", function (e) {
+      if (dragKey == null || el.dataset.card === dragKey) return;
+      e.preventDefault();
+      var r = el.getBoundingClientRect();
+      var topHalf = (e.clientY - r.top) < r.height / 2;
+      el.classList.toggle("over-top", topHalf);
+      el.classList.toggle("over-bottom", !topHalf);
+    });
+    el.addEventListener("dragleave", function (e) {
+      if (el.contains(e.relatedTarget)) return;        // ignore moves into children
+      el.classList.remove("over-top", "over-bottom");
+    });
+    el.addEventListener("drop", function (e) {
+      e.preventDefault();
+      if (dragKey == null || el.dataset.card === dragKey) return;
+      var above = el.classList.contains("over-top");
+      mergeCards(dragKey, el.dataset.card, above);
+      clearOver();
     });
   }
 
-  function buildBoard() {
-    if (muuri) { muuri.destroy(); grid.innerHTML = ""; }
-    // Order by saved z when present (so stacking order survives), else by time.
-    var ordered = state.notes.slice().sort(function (a, b) {
-      var za = a.z, zb = b.z;
-      if (a.x != null && b.x != null && za != null && zb != null) return za - zb;
-      return sortNotes(a, b);
-    });
-    ordered.forEach(function (n) { grid.appendChild(noteEl(n)); });
-
-    muuri = new Muuri(grid, {
-      dragEnabled: true,
-      dragRelease: { duration: 420, easing: "cubic-bezier(.17,.84,.44,1)" },
-      dragPlaceholder: { enabled: true, createElement: function () { var d = document.createElement("div"); d.className = "item"; d.style.opacity = "0"; return d; } },
-      layout: customLayout,
-      layoutOnResize: 150,
-      dragStartPredicate: function (item, e) {
-        // The delete button and the clickable tag/category chips are actions,
-        // not drag handles.
-        if (e.target.closest(".del") || e.target.closest(".chipbtn")) return false;
-        return Muuri.ItemDrag.defaultStartPredicate(item, e, { distance: 4, delay: 0 });
-      }
-    });
-    // The piles module, when loaded, owns the drag-release handler (it resolves
-    // stacking first, then calls savePositions), so we only self-subscribe when
-    // it is absent. This keeps exactly one save per release, with a deterministic
-    // order, instead of two racing fetches.
-    if (!window.__boardPilesActive) muuri.on("dragReleaseEnd", savePositions);
-    applyFilter();
-    // Let the piles module (re)bind its handler and redraw against the new
-    // Muuri instance after every rebuild (load, filter, order, add, stack).
-    if (window.__onBoardBuilt) window.__onBoardBuilt();
+  function mergeCards(srcKey, targetKey, above) {
+    var src = cardByKey(srcKey), target = cardByKey(targetKey);
+    if (!src || !target || src === target) return;
+    var combined = { ids: above ? src.ids.concat(target.ids) : target.ids.concat(src.ids) };
+    // Replace target in place with the combined card; drop the source card.
+    state.cards = state.cards.reduce(function (acc, c) {
+      if (c === src) return acc;
+      acc.push(c === target ? combined : c);
+      return acc;
+    }, []);
+    persist(); render();
   }
 
-  function savePositions() {
-    if (!muuri) return;
-    var positions = muuri.getItems().map(function (it, i) {
-      var el = it.getElement(); var r = it.getPosition();
-      var id = +el.dataset.id;
-      // Keep the in-memory note's x/y/z in sync so a later rebuild (filter,
-      // add, stack) re-applies the position the user just set, not the stale one.
-      var n = state.notes.find(function (x) { return x.id === id; });
-      if (n) { n.x = r.left; n.y = r.top; n.z = i; }
-      return { note_id: id, x: r.left, y: r.top, z: i };
-    });
-    api("/board/positions", { positions: positions }).catch(function () {
-      toast("Could not save layout");
-    });
+  // snip a merged card at boundary i: segments above stay one card, the rest
+  // become another (each a standalone note if left with one).
+  function snipAt(card, i) {
+    var idx = state.cards.indexOf(card);
+    if (idx === -1) return;
+    var a = { ids: card.ids.slice(0, i) }, b = { ids: card.ids.slice(i) };
+    state.cards.splice(idx, 1, a, b);
+    persist(); render();
   }
 
   // --- category + tag dropdowns ------------------------------------------
-  // Two independent selects. Category value is the bare category, Tag value the
-  // bare tag; empty is All. They AND in passes(n).
   var catSel = document.getElementById("category");
   var tagSel = document.getElementById("tag");
   function fillSelect(sel, counts, prefix, stateKey, sortByCount) {
@@ -239,14 +340,9 @@
       var o = document.createElement("option"); o.value = k;
       o.textContent = prefix + k + " (" + counts[k] + ")"; sel.appendChild(o);
     });
-    // Keep selection if it still exists; else reset to All and clear the state,
-    // so control and board never disagree after a delete removes the last option.
     if (Array.prototype.some.call(sel.options, function (o) { return o.value === prev; })) {
       sel.value = prev;
-    } else {
-      sel.value = "";
-      state[stateKey] = null;
-    }
+    } else { sel.value = ""; state[stateKey] = null; }
   }
   function buildTopics() {
     var tagCount = {}, catCount = {};
@@ -257,26 +353,13 @@
     fillSelect(catSel, catCount, "@", "cat", false);
     fillSelect(tagSel, tagCount, "#", "tag", true);
   }
-
-  // Clicking a tag/category on a card filters the board to it and reflects the
-  // choice in the matching dropdown (the existing filter path).
   function filterByCategory(cat) {
     state.cat = cat || null; catSel.value = state.cat || "";
-    if (typeof detachActive === "function") detachActive();
-    applyFilter();
+    detachActive(); render();
   }
   function filterByTag(tag) {
     state.tag = tag || null; tagSel.value = state.tag || "";
-    if (typeof detachActive === "function") detachActive();
-    applyFilter();
-  }
-
-  // Colors (W7 settings) are applied to a tag/category chip here; filled in by
-  // the settings module. Default: no color, chip renders as today.
-  var chipColors = {};  // key "tag:x" / "cat:y" -> "#rrggbb"
-  function applyChipColor(el, key) {
-    var hex = chipColors[key];
-    if (hex) { el.style.color = hex; el.style.borderColor = hex; el.classList.add("colored"); }
+    detachActive(); render();
   }
 
   // --- reminders dropdown ------------------------------------------------
@@ -303,51 +386,50 @@
     });
   }
   function focusNote(id) {
-    if (!muuri) return;
-    // Reveal the note if a filter is hiding it, then scroll + highlight.
-    var it = muuri.getItems().find(function (i) { return +i.getElement().dataset.id === id; });
-    if (!it) return;
-    if (!it.isVisible()) muuri.show([it]);
-    var el = it.getElement();
-    el.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+    var card = state.cards.find(function (c) { return c.ids.indexOf(id) !== -1; });
+    if (!card) return;
+    var el = grid.querySelector('.card[data-card="' + card.ids[0] + '"]');
+    if (!el) {            // hidden by a filter: clear filters and re-render to reveal it
+      clearFilters(); render();
+      el = grid.querySelector('.card[data-card="' + card.ids[0] + '"]');
+    }
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
     el.classList.add("flash");
     setTimeout(function () { el.classList.remove("flash"); }, 1400);
   }
 
   // --- add / delete ------------------------------------------------------
-  function removeNote(id) {
-    api("/board/delete", { note_id: id }).then(function (r) {
-      if (!r.ok) throw 0;
-      state.notes = state.notes.filter(function (n) { return n.id !== id; });
-      var it = muuri.getItems().find(function (i) { return +i.getElement().dataset.id === id; });
-      if (it) muuri.remove([it], { removeElements: true });
-      buildTopics(); applyFilter();
-    }).catch(function () { toast("Could not delete note"); });
+  function deleteNotes(ids) {
+    var chain = Promise.resolve();
+    ids.forEach(function (id) {
+      chain = chain.then(function () { return api("/board/delete", { note_id: id }).then(function (r) { if (!r.ok) throw 0; }); });
+    });
+    chain.then(function () { return reload(); }).catch(function () { toast("Could not delete note"); });
   }
   function addNote(text) {
     text = (text || "").trim(); if (!text) return;
-    api("/board/add", { text: text }).then(function (r) {
-      if (!r.ok) throw 0; return reload();
-    }).catch(function () { toast("Could not add note"); });
+    api("/board/add", { text: text }).then(function (r) { if (!r.ok) throw 0; return reload(); })
+      .catch(function () { toast("Could not add note"); });
   }
 
-  // --- composer ----------------------------------------------------------
-  var composer = null;
-  function openComposer(x, y) {
+  // --- composer (centered) -----------------------------------------------
+  var composer = null, backdrop = null;
+  function openComposer() {
     closeComposer();
+    backdrop = document.createElement("div"); backdrop.className = "composer-backdrop";
+    backdrop.addEventListener("click", closeComposer);
     composer = document.createElement("div"); composer.className = "composer";
     var ta = document.createElement("textarea");
     ta.placeholder = "Stash a thought…  #tag @category";
-    var tip = document.createElement("div"); tip.className = "tip"; tip.textContent = "#tags and @category are picked up automatically.";
+    var tip = document.createElement("div"); tip.className = "tip";
+    tip.textContent = "#tags and @category are picked up automatically.";
     var row = document.createElement("div"); row.className = "row";
     var cancel = document.createElement("button"); cancel.className = "cancel"; cancel.type = "button"; cancel.textContent = "Cancel";
     var saveB = document.createElement("button"); saveB.className = "save"; saveB.type = "button"; saveB.textContent = "Stash";
     row.appendChild(cancel); row.appendChild(saveB);
     composer.appendChild(ta); composer.appendChild(tip); composer.appendChild(row);
-    var bw = wrap.clientWidth, bh = wrap.clientHeight;
-    composer.style.left = Math.min(Math.max(x, 8), bw - 238) + "px";
-    composer.style.top = Math.min(Math.max(y, 8), bh - 150) + "px";
-    wrap.appendChild(composer); ta.focus();
+    document.body.appendChild(backdrop); document.body.appendChild(composer); ta.focus();
     saveB.addEventListener("click", function () { addNote(ta.value); closeComposer(); });
     cancel.addEventListener("click", closeComposer);
     ta.addEventListener("keydown", function (e) {
@@ -355,20 +437,21 @@
       if (e.key === "Escape") closeComposer();
     });
   }
-  function closeComposer() { if (composer) { composer.remove(); composer = null; } }
+  function closeComposer() {
+    if (composer) { composer.remove(); composer = null; }
+    if (backdrop) { backdrop.remove(); backdrop = null; }
+  }
 
   // --- search ------------------------------------------------------------
   var searchInput = document.getElementById("search");
   var searchTimer = null;
   function runSearch(q) {
     q = (q || "").trim();
-    if (!q) { state.searchIds = null; applyFilter(); return; }
+    if (!q) { state.searchIds = null; render(); return; }
     fetch("/board/search?q=" + encodeURIComponent(q), { headers: { "X-CSRF-Token": CSRF } })
       .then(function (r) { return r.json(); })
-      .then(function (data) {
-        state.searchIds = new Set(data.ids || []);
-        applyFilter();
-      }).catch(function () { toast("Search failed"); });
+      .then(function (data) { state.searchIds = new Set(data.ids || []); render(); })
+      .catch(function () { toast("Search failed"); });
   }
   searchInput.addEventListener("input", function () {
     var q = this.value;
@@ -377,21 +460,16 @@
   });
 
   // --- category / tag / order / date controls ----------------------------
-  catSel.addEventListener("change", function () { state.cat = this.value || null; applyFilter(); });
-  tagSel.addEventListener("change", function () { state.tag = this.value || null; applyFilter(); });
-  document.getElementById("order").addEventListener("change", function () {
-    state.order = this.value; buildBoard();
-  });
+  catSel.addEventListener("change", function () { state.cat = this.value || null; render(); });
+  tagSel.addEventListener("change", function () { state.tag = this.value || null; render(); });
+  var orderSel = document.getElementById("order");
+  orderSel.addEventListener("change", function () { state.order = this.value; render(); });
   var fromInput = document.getElementById("from"), toInput = document.getElementById("to");
-  // Date-only inputs. From is the start of its day; To includes the whole day
-  // (end-of-day), so a note created any time on the To date still matches.
   function parseFrom(v) { if (!v) return null; var t = new Date(v + "T00:00:00").getTime(); return isNaN(t) ? null : t; }
   function parseTo(v) { if (!v) return null; var t = new Date(v + "T23:59:59.999").getTime(); return isNaN(t) ? null : t; }
-  fromInput.addEventListener("change", function () { state.from = parseFrom(this.value); applyFilter(); });
-  toInput.addEventListener("change", function () { state.to = parseTo(this.value); applyFilter(); });
-  document.getElementById("clearBtn").addEventListener("click", function () {
-    clearFilters(); applyFilter();
-  });
+  fromInput.addEventListener("change", function () { state.from = parseFrom(this.value); render(); });
+  toInput.addEventListener("change", function () { state.to = parseTo(this.value); render(); });
+  document.getElementById("clearBtn").addEventListener("click", function () { clearFilters(); render(); });
   function clearFilters() {
     state.tag = state.cat = null; state.searchIds = null; state.from = state.to = null;
     searchInput.value = ""; catSel.value = ""; tagSel.value = "";
@@ -420,13 +498,10 @@
     if (remindersPanel.hidden) openReminders(); else closeReminders();
   });
 
-  document.getElementById("addBtn").addEventListener("click", function () {
-    openComposer(wrap.clientWidth - 250, wrap.clientHeight - 170);
-  });
+  document.getElementById("addBtn").addEventListener("click", openComposer);
   wrap.addEventListener("dblclick", function (e) {
-    if (e.target.closest(".note") || e.target.closest(".composer")) return;
-    var r = this.getBoundingClientRect();
-    openComposer(e.clientX - r.left + this.scrollLeft, e.clientY - r.top + this.scrollTop);
+    if (e.target.closest(".card") || e.target.closest(".composer")) return;
+    openComposer();
   });
 
   // --- settings (theme, default sort, tag/category colors) ---------------
@@ -441,14 +516,14 @@
   function applyTheme(theme) {
     var root = document.documentElement;
     if (theme === "light" || theme === "dark") root.setAttribute("data-theme", theme);
-    else root.removeAttribute("data-theme");  // system: follow prefers-color-scheme
+    else root.removeAttribute("data-theme");
     document.querySelectorAll("#themeRow .theme-opt").forEach(function (b) {
       b.classList.toggle("on", b.dataset.theme === theme);
     });
   }
   function applySettings(s) {
     settings = s || settings;
-    chipColors = {};  // the map noteEl reads via applyChipColor
+    chipColors = {};
     Object.keys(settings.colors || {}).forEach(function (k) {
       if (HEX.test(settings.colors[k])) chipColors[k] = settings.colors[k];
     });
@@ -457,9 +532,8 @@
     renderColorRows();
   }
   function saveSettings() {
-    api("/board/settings", settings).then(function (r) {
-      if (!r.ok) throw 0; return r.json();
-    }).then(function (clean) { applySettings(clean); if (muuri) buildBoard(); })
+    api("/board/settings", settings).then(function (r) { if (!r.ok) throw 0; return r.json(); })
+      .then(function (clean) { applySettings(clean); render(); })
       .catch(function () { toast("Could not save settings"); });
   }
   function loadSettings() {
@@ -467,38 +541,32 @@
       .then(function (r) { return r.json(); })
       .then(function (s) {
         applySettings(s);
-        // Default sort is the initial order unless the user already changed it.
-        if (!orderTouched) { state.order = settings.defaultSort || "newest";
-          document.getElementById("order").value = state.order; }
+        if (!orderTouched) { state.order = settings.defaultSort || "newest"; orderSel.value = state.order; }
       }).catch(function () {});
   }
-
   function renderColorRows() {
     var cats = {}, tags = {};
     state.notes.forEach(function (n) {
       if (n.category) cats[n.category] = true;
       (n.tags || []).forEach(function (t) { tags[t] = true; });
     });
-    var keys = Object.keys(cats).sort().map(function (c) { return { key: "cat:" + c, label: "@" + c }; })
-      .concat(Object.keys(tags).sort().map(function (t) { return { key: "tag:" + t, label: "#" + t }; }));
+    var keys = Object.keys(cats).sort().map(function (c) { return { key: "cat:" + c, label: "@" + c, dflt: catColor(c) }; })
+      .concat(Object.keys(tags).sort().map(function (t) { return { key: "tag:" + t, label: "#" + t, dflt: tagColor(t) }; }));
     colorsList.innerHTML = "";
     colorsEmpty.hidden = keys.length !== 0;
     keys.forEach(function (item) {
       var row = document.createElement("div"); row.className = "color-row";
       var lab = document.createElement("span"); lab.className = "color-label"; lab.textContent = item.label;
       var input = document.createElement("input"); input.type = "color";
-      input.value = settings.colors[item.key] || "#888888";
-      input.addEventListener("change", function () {
-        settings.colors[item.key] = input.value; saveSettings();
-      });
+      input.value = settings.colors[item.key] || item.dflt || "#888888";
+      input.addEventListener("change", function () { settings.colors[item.key] = input.value; saveSettings(); });
       var clear = document.createElement("button"); clear.type = "button"; clear.className = "color-clear";
-      clear.textContent = "×"; clear.title = "Remove color";
+      clear.textContent = "×"; clear.title = "Reset to default color";
       clear.addEventListener("click", function () { delete settings.colors[item.key]; saveSettings(); });
       row.appendChild(lab); row.appendChild(input); row.appendChild(clear);
       colorsList.appendChild(row);
     });
   }
-
   function openSettings() {
     settingsPanel.hidden = false; settingsBtn.setAttribute("aria-expanded", "true");
     renderColorRows();
@@ -521,43 +589,32 @@
     var b = e.target.closest(".theme-opt"); if (!b) return;
     settings.theme = b.dataset.theme; applyTheme(settings.theme); saveSettings();
   });
-  defaultSortSel.addEventListener("change", function () {
-    settings.defaultSort = this.value; saveSettings();
-  });
-  // Track whether the user has manually changed the board order, so loading the
-  // default sort does not override an explicit choice made before settings load.
+  defaultSortSel.addEventListener("change", function () { settings.defaultSort = this.value; saveSettings(); });
   var orderTouched = false;
-  document.getElementById("order").addEventListener("change", function () { orderTouched = true; });
+  orderSel.addEventListener("change", function () { orderTouched = true; });
 
   // --- saved boards ------------------------------------------------------
-  // A saved board is a named filter set. "Save current" stores the active
-  // filters; clicking a saved board re-applies them. One shared canvas layout.
   var boardsList = document.getElementById("boardsList");
   var boardsEmpty = document.getElementById("boardsEmpty");
   var savedBoards = [];
   var activeBoardId = null;
 
   function currentConfig() {
-    return {
-      category: state.cat, tag: state.tag,
-      from: fromInput.value || null, to: toInput.value || null,
-      search: searchInput.value || "", order: state.order
-    };
+    return { category: state.cat, tag: state.tag,
+             from: fromInput.value || null, to: toInput.value || null,
+             search: searchInput.value || "", order: state.order };
   }
   function applyConfig(cfg) {
     cfg = cfg || {};
-    // Topic selects: set state + control together.
     state.cat = cfg.category || null; catSel.value = state.cat || "";
     state.tag = cfg.tag || null; tagSel.value = state.tag || "";
-    state.order = cfg.order || "newest"; document.getElementById("order").value = state.order;
+    state.order = cfg.order || "newest"; orderSel.value = state.order;
     fromInput.value = cfg.from || ""; state.from = parseFrom(fromInput.value);
     toInput.value = cfg.to || ""; state.to = parseTo(toInput.value);
     searchInput.value = cfg.search || "";
-    // Search is async; set it then re-filter when it returns (or clear).
     if (searchInput.value.trim()) runSearch(searchInput.value);
-    else { state.searchIds = null; buildBoard(); applyFilter(); }
+    else { state.searchIds = null; render(); }
   }
-
   function renderBoards() {
     boardsList.innerHTML = "";
     boardsEmpty.hidden = savedBoards.length !== 0;
@@ -588,8 +645,6 @@
       renderBoards();
     }).catch(function () { toast("Could not delete board"); });
   }
-
-  // "Save current": an inline name input (window.prompt is inert in some hosts).
   var saveBtn = document.getElementById("saveBoardBtn");
   saveBtn.addEventListener("click", function () {
     if (document.getElementById("boardNameInput")) return;
@@ -599,15 +654,14 @@
     saveBtn.insertAdjacentElement("afterend", input); input.focus();
     var finished = false;
     function done(commit) {
-      if (finished) return;      // Enter removes the input, which fires blur ->
-      finished = true;           // done() again; guard against a double submit.
+      if (finished) return;
+      finished = true;
       var name = input.value.trim(); input.remove();
       if (commit && name) {
         api("/board/boards", { name: name, config: currentConfig() }).then(function (r) {
           if (!r.ok) throw 0; return r.json();
-        }).then(function (res) {
-          activeBoardId = res.id; return loadBoards();
-        }).catch(function () { toast("Could not save board"); });
+        }).then(function (res) { activeBoardId = res.id; return loadBoards(); })
+          .catch(function () { toast("Could not save board"); });
       }
     }
     input.addEventListener("keydown", function (e) {
@@ -617,13 +671,10 @@
     input.addEventListener("blur", function () { done(true); });
   });
 
-  // Changing any filter detaches the active-board highlight (the view no longer
-  // matches a saved board exactly). Bind both input and change: the search box
-  // fires input, while selects and date inputs fire change, so covering both
-  // keeps the highlight honest on every control and every browser engine.
   function detachActive() { if (activeBoardId) { activeBoardId = null; renderBoards(); } }
-  [searchInput, catSel, tagSel, document.getElementById("order"), fromInput, toInput]
-    .forEach(function (el) { el.addEventListener("input", detachActive); el.addEventListener("change", detachActive); });
+  [searchInput, catSel, tagSel, orderSel, fromInput, toInput].forEach(function (el) {
+    el.addEventListener("input", detachActive); el.addEventListener("change", detachActive);
+  });
 
   // --- load + boot -------------------------------------------------------
   function reload() {
@@ -631,35 +682,31 @@
       .then(function (r) { return r.json(); })
       .then(function (data) {
         state.notes = data.notes || [];
-        state.piles = data.piles || [];
-        buildTopics(); buildBoard();
+        state.byId = {};
+        state.notes.forEach(function (n) { state.byId[n.id] = n; });
+        buildCards(); buildTopics(); render();
         if (!settingsPanel.hidden) renderColorRows();
       });
   }
 
-  // Load settings first (theme + colors ready before cards build), then notes.
-  // Settings are presentation only, so a settings failure must never block the
-  // notes load: swallow it before chaining reload.
   loadSettings()
     .catch(function () {})
     .then(reload)
     .catch(function () { hint.textContent = "Could not load your notes."; hint.hidden = false; });
   loadBoards();
 
+  // keep "ago"/countdown text fresh without disturbing a drag in progress
   setInterval(function () {
-    if (!muuri) return;
-    muuri.getItems().forEach(function (it) {
-      var id = +it.getElement().dataset.id;
-      var n = state.notes.find(function (x) { return x.id === id; });
-      if (!n) return;
-      var el = it.getElement();
-      var tEl = el.querySelector(".foot time"); if (tEl) tEl.textContent = ago(n.created_at);
-      var tm = el.querySelector(".timer"); if (tm && n.timer) tm.textContent = until(n.timer);
+    if (dragKey != null) return;
+    grid.querySelectorAll(".card").forEach(function (el) {
+      var card = cardByKey(el.dataset.card); if (!card) return;
+      var top = noteById(card.ids[0]);
+      var tEl = el.querySelector(".meta .time"); if (tEl && top) tEl.textContent = ago(top.created_at);
+      var timed = card.ids.map(noteById).filter(function (n) { return n && n.timer; })
+        .sort(function (a, b) { return new Date(a.timer) - new Date(b.timer); });
+      var rt = el.querySelector(".remind-tab");
+      if (rt && timed.length) rt.lastChild.textContent = until(timed[0].timer);
     });
-    buildRail();  // keep the rail countdowns fresh too
+    buildRail();
   }, 30000);
-
-  // expose a couple of internals for the piles module (Task 4) to extend.
-  window.__board = { get muuri() { return muuri; }, state: state, api: api, toast: toast,
-    savePositions: savePositions, reload: reload };
 })();

@@ -196,8 +196,9 @@ async def board_page(request: Request) -> Response:
 
 async def board_notes(request: Request) -> Response:
     storage = request.app.state.storage
-    return JSONResponse({"notes": storage.board_notes(),
-                         "piles": [dict(p) for p in storage.board_piles()]})
+    # Each note carries its merged-group membership (pile_id + seq); the client
+    # reconstructs the merged cards from that, so there is no separate pile list.
+    return JSONResponse({"notes": storage.board_notes()})
 
 
 async def board_search(request: Request) -> Response:
@@ -224,28 +225,18 @@ async def _json_body(request: Request):
         raise HTTPException(status_code=400, detail="invalid json body")
 
 
-async def board_positions(request: Request) -> Response:
+async def board_groups(request: Request) -> Response:
+    # The client owns the full merge layout and sends it whole on every merge or
+    # snip: a list of ordered note-id lists, one per merged card. The server
+    # rebuilds the group state to match. Replacing wholesale (rather than diffing)
+    # keeps merge and snip from ever racing into an inconsistent half-state.
     _require_csrf(request, "")
     body = await _json_body(request)
-    positions = body.get("positions") if isinstance(body, dict) else None
-    if not isinstance(positions, list):
-        raise HTTPException(status_code=400, detail="positions must be a list")
-    written = request.app.state.storage.save_positions(positions)
-    return JSONResponse({"ok": True, "written": written})
-
-
-async def board_piles(request: Request) -> Response:
-    _require_csrf(request, "")
-    body = await _json_body(request)
-    if not isinstance(body, dict):
-        raise HTTPException(status_code=400, detail="invalid body")
-    piles = body.get("piles", [])
-    assignments = body.get("assignments", {})
-    if not isinstance(piles, list) or not isinstance(assignments, dict):
-        raise HTTPException(status_code=400, detail="invalid piles payload")
-    mapping = request.app.state.storage.save_piles(piles, assignments)
-    # Keys are client ids (strings); JSON object keys are strings already.
-    return JSONResponse({"ok": True, "piles": mapping})
+    groups = body.get("groups") if isinstance(body, dict) else None
+    if not isinstance(groups, list):
+        raise HTTPException(status_code=400, detail="groups must be a list")
+    written = request.app.state.storage.save_groups(groups)
+    return JSONResponse({"ok": True, "groups": written})
 
 
 async def board_add(request: Request) -> Response:
@@ -366,8 +357,7 @@ def build_app(storage, embedder, config) -> Starlette:
         Route("/", board_page, methods=["GET"]),
         Route("/board/notes", board_notes, methods=["GET"]),
         Route("/board/search", board_search, methods=["GET"]),
-        Route("/board/positions", board_positions, methods=["POST"]),
-        Route("/board/piles", board_piles, methods=["POST"]),
+        Route("/board/groups", board_groups, methods=["POST"]),
         Route("/board/add", board_add, methods=["POST"]),
         Route("/board/delete", board_delete, methods=["POST"]),
         Route("/board/boards", board_boards_list, methods=["GET"]),

@@ -77,10 +77,14 @@ def test_reindex_clears_clusters(tmp_path):
 
 
 def test_reindex_preserves_board_layout(tmp_path):
-    # Board layout is durable state; reindex must not touch it.
+    # Merge grouping is durable board state; reindex must not touch it.
     s = Storage.open(str(tmp_path / "board.db"))
-    nid = capture(s, FakeEmbedder(), "a note", "web", _now()).note_id
-    s.save_positions([{"note_id": nid, "x": 7.0, "y": 8.0, "z": 3}])
-    reindex(s, FakeEmbedder())
-    note = next(n for n in s.board_notes() if n["id"] == nid)
-    assert note["x"] == 7.0 and note["y"] == 8.0 and note["z"] == 3
+    e = FakeEmbedder()
+    a = capture(s, e, "a note", "web", _now()).note_id
+    b = capture(s, e, "b note", "web", _now()).note_id
+    s.save_groups([[a, b]])
+    reindex(s, e)
+    notes = {n["id"]: n for n in s.board_notes()}
+    assert notes[a]["pile_id"] is not None
+    assert notes[a]["pile_id"] == notes[b]["pile_id"]
+    assert notes[a]["seq"] == 0 and notes[b]["seq"] == 1

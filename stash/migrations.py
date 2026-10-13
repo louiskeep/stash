@@ -101,4 +101,13 @@ MIGRATIONS: list[tuple[int, str]] = [
         created_at TEXT
     );
     """),
+    (4, """
+    -- W8: the board is an ordered grid with merged notes (groups) rather than a
+    -- free-drag canvas with piles. A merged card is a group of notes shown in
+    -- order; `seq` is a note's place within its group (0 = top). The raw notes
+    -- are never combined or rewritten -- a merge is a reversible grouping, so
+    -- this is durable state a reindex must preserve, exactly like pile_id.
+    -- Free-canvas x/y are no longer written; old rows keep their values harmlessly.
+    ALTER TABLE board_layout ADD COLUMN seq INTEGER NOT NULL DEFAULT 0;
+    """),
 ]
